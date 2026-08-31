@@ -1,4 +1,4 @@
-﻿// Package web 提供 HTTP 路由与页面渲染（逻辑对齐 Node 版 server.js + src/routes/*）
+// Package web 提供 HTTP 路由与页面渲染（逻辑对齐 Node 版 server.js + src/routes/*）
 package web
 
 import (
@@ -261,6 +261,8 @@ type InstanceView struct {
 }
 
 func render(w http.ResponseWriter, name string, data *page) {
+	// 页面数据（租户列表等）随时变化，禁止浏览器/代理缓存
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tmpl.ExecuteTemplate(w, name, data); err != nil {
 		http.Error(w, "模板渲染失败: "+err.Error(), http.StatusInternalServerError)
