@@ -153,12 +153,16 @@ func save() {
 	tmp := storeFile + ".tmp"
 	b, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
+		fmt.Println("[存储] 序列化失败:", err)
 		return
 	}
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		fmt.Println("[存储] 写入失败（数据仅保留在内存中，重启后将丢失）:", err)
 		return
 	}
-	_ = os.Rename(tmp, storeFile)
+	if err := os.Rename(tmp, storeFile); err != nil {
+		fmt.Println("[存储] 替换 store.json 失败:", err)
+	}
 }
 
 func Init() {

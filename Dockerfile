@@ -8,7 +8,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/oci-pan
 
 # 运行阶段：scratch 或 alpine（alpine 便于排查）
 FROM alpine:3.20
-RUN adduser -D -u 1000 app
+RUN adduser -D -u 1000 app && mkdir -p /app/data && chown -R app:app /app/data
 WORKDIR /app
 COPY --from=builder /out/oci-panel /usr/local/bin/oci-panel
 USER app
