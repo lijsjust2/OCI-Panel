@@ -1,4 +1,4 @@
-name: Docker Build and Release
+﻿name: Docker Build and Release
 
 on:
   push:
@@ -51,14 +51,14 @@ jobs:
           context: .
           platforms: linux/amd64
           load: true
-          tags: oci-plan-go:${{ steps.rel.outputs.version }}-amd64
+          tags: oci-panel:${{ steps.rel.outputs.version }}-amd64
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Export AMD64 image
         run: |
-          docker save oci-plan-go:${{ steps.rel.outputs.version }}-amd64 | gzip > oci-plan-go_${{ steps.rel.outputs.version }}_linux_amd64.tar.gz
-          ls -lh oci-plan-go_*.tar.gz
+          docker save oci-panel:${{ steps.rel.outputs.version }}-amd64 | gzip > oci-panel_${{ steps.rel.outputs.version }}_linux_amd64.tar.gz
+          ls -lh oci-panel_*.tar.gz
 
       # ---- ARM64：构建 + 导出 tar ----
       - name: Build ARM64 image
@@ -67,18 +67,18 @@ jobs:
           context: .
           platforms: linux/arm64
           load: true
-          tags: oci-plan-go:${{ steps.rel.outputs.version }}-arm64
+          tags: oci-panel:${{ steps.rel.outputs.version }}-arm64
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Export ARM64 image
         run: |
-          docker save oci-plan-go:${{ steps.rel.outputs.version }}-arm64 | gzip > oci-plan-go_${{ steps.rel.outputs.version }}_linux_arm64.tar.gz
-          ls -lh oci-plan-go_*.tar.gz
+          docker save oci-panel:${{ steps.rel.outputs.version }}-arm64 | gzip > oci-panel_${{ steps.rel.outputs.version }}_linux_arm64.tar.gz
+          ls -lh oci-panel_*.tar.gz
 
       - name: Generate checksums
         run: |
-          sha256sum oci-plan-go_*_linux_*.tar.gz > checksums.txt
+          sha256sum oci-panel_*_linux_*.tar.gz > checksums.txt
           cat checksums.txt
 
       # ---- 可选：推多架构镜像到 Docker Hub（配置了 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN secrets 时自动启用）----
@@ -106,8 +106,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/oci-plan-go:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/oci-plan-go:${{ steps.rel.outputs.version }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/oci-panel:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/oci-panel:${{ steps.rel.outputs.version }}
           cache-from: type=gha
 
       # ---- 创建 GitHub Release，附上两个架构的镜像 tar ----
@@ -116,13 +116,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', steps.rel.outputs.version) }}
-          name: OCI Plan Go v${{ steps.rel.outputs.version }}
+          name: OCI Panel v${{ steps.rel.outputs.version }}
           token: ${{ secrets.GITHUB_TOKEN }}
           files: |
-            oci-plan-go_*_linux_*.tar.gz
+            oci-panel_*_linux_*.tar.gz
             checksums.txt
           body: |
-            ## OCI Plan Go v${{ steps.rel.outputs.version }}
+            ## OCI Panel v${{ steps.rel.outputs.version }}
 
             ### 支持架构
             - **AMD64** (x86_64) — 普通 PC / 服务器 / 云主机
@@ -131,21 +131,21 @@ jobs:
             ### 从 Releases 下载镜像离线部署
             ```bash
             # 下载对应架构的 tar.gz 后导入（示例为 amd64）
-            docker load -i oci-plan-go_${{ steps.rel.outputs.version }}_linux_amd64.tar.gz
+            docker load -i oci-panel_${{ steps.rel.outputs.version }}_linux_amd64.tar.gz
 
             # 运行
             docker run -d \
-              --name oci-plan-go \
+              --name oci-panel \
               -p 8800:8800 \
               -v ./data:/app/data \
               -e TZ=Asia/Shanghai \
               --restart unless-stopped \
-              oci-plan-go:${{ steps.rel.outputs.version }}-amd64
+              oci-panel:${{ steps.rel.outputs.version }}-amd64
             ```
 
             ### Docker Hub 拉取（自动适配架构）
             ```bash
-            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/oci-plan-go:${{ steps.rel.outputs.version }}
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/oci-panel:${{ steps.rel.outputs.version }}
             ```
 
             ### 数据与配置

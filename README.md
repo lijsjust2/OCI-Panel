@@ -1,6 +1,6 @@
-# OCI Panel (Go)
+﻿# OCI Panel
 
-Oracle Cloud（OCI）多租户管理面板，Go 语言实现。由 [OCI-Panel](https://github.com/)（Node.js 版）完整迁移而来，功能一致，单二进制部署，内存与镜像体积大幅缩减。
+Oracle Cloud（OCI）多租户管理面板。单二进制部署，内存与镜像体积小，功能完整。
 
 ## 功能
 
@@ -58,7 +58,7 @@ docker run -d \
   -p 8800:8800 \
   -v oci-panel-data:/app/data \
   -e ADMIN_PASSWORD=你的管理员密码 \
-  oci-panel-go
+  oci-panel
 ```
 
 或使用 `docker-compose.yml`：

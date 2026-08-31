@@ -21,7 +21,7 @@ func main() {
 		Handler:           web.New(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	log.Printf("OCI Panel (Go) 已启动，监听端口 %s，数据目录 %s", config.Port, config.DataDir)
+	log.Printf("OCI Panel 已启动，监听端口 %s，数据目录 %s", config.Port, config.DataDir)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("HTTP 服务启动失败: %v", err)
 	}
