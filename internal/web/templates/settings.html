@@ -157,27 +157,55 @@
 <!-- ============== 5. 配置备份（加密导出/导入） ============== -->
 <section class="card">
   <h2 style="margin-top:0;">📦 配置备份</h2>
-  <p class="muted small">导出时用密码加密全部配置（租户 API 含私钥、推送渠道、通知任务），生成 .dat 加密文件，直接打开为乱码。导入时需要相同的密码。</p>
-
-  <div style="margin-bottom:16px;">
-    <label for="exportPwd" style="display:block; margin-bottom:6px;">导出密码（至少 4 位，用于加密配置文件）</label>
-    <div class="test-row" style="flex-wrap:wrap; gap:8px;">
-      <input type="password" id="exportPwd" minlength="4" placeholder="设置导出密码" style="width:200px;">
-      <button type="button" class="btn" onclick="exportConfig()">⬇ 导出加密配置</button>
-    </div>
-  </div>
-
-  <div>
-    <label for="importPwd" style="display:block; margin-bottom:6px;">导入密码（导出时设置的密码）</label>
-    <div class="test-row" style="flex-wrap:wrap; gap:8px;">
-      <input type="password" id="importPwd" minlength="4" placeholder="输入导入密码" style="width:200px;">
-      <input type="file" id="importFile" accept=".dat,.bin" style="display:none;" onchange="importConfig(event)">
-      <button type="button" class="btn" onclick="document.getElementById('importFile').click()">⬆ 选择文件并导入</button>
-      <span id="importResult" class="muted small"></span>
-    </div>
+  <p class="muted small">导出全部配置（租户 API 含私钥、推送渠道、通知任务），并设置密码加密生成 .dat 文件（直接打开为乱码）。导入时需要相同密码。</p>
+  <div class="test-row" style="flex-wrap:wrap; gap:8px;">
+    <button type="button" class="btn" onclick="openExportModal()">⬇ 导出配置</button>
+    <button type="button" class="btn" onclick="openImportModal()">⬆ 导入配置</button>
+    <span id="backupResult" class="muted small"></span>
   </div>
   <p class="muted small" style="margin-top:8px;">导入按 Tenancy OCID 合并：已存在的租户会被更新，不会重复添加；实例与费用数据导入后通过「同步」自动重建；2FA 需手动重新开启。</p>
 </section>
+
+<!-- 导出弹窗 -->
+<div id="exportModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.45);z-index:9999;align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:10px;padding:24px 28px;width:380px;box-shadow:0 12px 40px rgba(0,0,0,0.2);">
+    <h3 style="margin:0 0 6px 0;">导出配置</h3>
+    <p class="muted small" style="margin:0 0 16px 0;">设置一个密码来加密配置文件（至少 4 位）</p>
+    <div class="field">
+      <label>导出密码</label>
+      <input type="password" id="mExportPwd" minlength="4" placeholder="设置密码" style="width:100%;box-sizing:border-box;">
+    </div>
+    <div class="field">
+      <label>确认密码</label>
+      <input type="password" id="mExportPwd2" minlength="4" placeholder="再次输入密码" style="width:100%;box-sizing:border-box;">
+    </div>
+    <div style="display:flex;gap:10px;margin-top:18px;justify-content:flex-end;">
+      <button type="button" class="btn" onclick="closeExportModal()">取消</button>
+      <button type="button" class="btn primary" onclick="doExport()">确定导出</button>
+    </div>
+  </div>
+</div>
+
+<!-- 导入弹窗 -->
+<div id="importModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.45);z-index:9999;align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:10px;padding:24px 28px;width:400px;box-shadow:0 12px 40px rgba(0,0,0,0.2);">
+    <h3 style="margin:0 0 6px 0;">导入配置</h3>
+    <p class="muted small" style="margin:0 0 16px 0;">选择之前导出的 .dat 文件，输入导出时设置的密码</p>
+    <div class="field">
+      <label>配置文件</label>
+      <input type="file" id="mImportFile" accept=".dat,.bin" style="width:100%;box-sizing:border-box;">
+    </div>
+    <div class="field">
+      <label>导入密码</label>
+      <input type="password" id="mImportPwd" placeholder="输入导出时的密码" style="width:100%;box-sizing:border-box;">
+    </div>
+    <div id="importErr" style="color:#dc3545;font-size:13px;margin-top:8px;"></div>
+    <div style="display:flex;gap:10px;margin-top:18px;justify-content:flex-end;">
+      <button type="button" class="btn" onclick="closeImportModal()">取消</button>
+      <button type="button" class="btn primary" onclick="doImport()">确定导入</button>
+    </div>
+  </div>
+</div>
 
 <script>
 async function testChannel(which) {
@@ -234,62 +262,81 @@ async function testNotify(btn) {
   btn.disabled = false;
 }
 
-async function exportConfig() {
-  const pwd = document.getElementById('exportPwd').value;
-  if (!pwd || pwd.length < 4) { alert('请输入至少 4 位的导出密码'); return; }
+
+// ========== 配置备份 弹窗交互 ==========
+function openExportModal() {
+  document.getElementById("mExportPwd").value = "";
+  document.getElementById("mExportPwd2").value = "";
+  document.getElementById("exportModal").style.display = "flex";
+}
+function closeExportModal() {
+  document.getElementById("exportModal").style.display = "none";
+}
+function openImportModal() {
+  document.getElementById("mImportFile").value = "";
+  document.getElementById("mImportPwd").value = "";
+  document.getElementById("importErr").textContent = "";
+  document.getElementById("importModal").style.display = "flex";
+}
+function closeImportModal() {
+  document.getElementById("importModal").style.display = "none";
+}
+
+async function doExport() {
+  const pwd = document.getElementById("mExportPwd").value;
+  const pwd2 = document.getElementById("mExportPwd2").value;
+  if (!pwd || pwd.length < 4) { alert("密码至少 4 位"); return; }
+  if (pwd !== pwd2) { alert("两次密码不一致"); return; }
   try {
-    const r = await fetch('/settings/export', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    const r = await fetch("/settings/export", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ password: pwd }),
     });
     if (!r.ok) {
       let msg = r.statusText;
       try { const j = await r.json(); msg = j.error || msg; } catch (e) {}
-      alert('导出失败：' + msg);
+      alert("导出失败：" + msg);
       return;
     }
     const blob = await r.blob();
-    const cd = r.headers.get('Content-Disposition') || '';
+    const cd = r.headers.get("Content-Disposition") || "";
     const m = cd.match(/filename="?([^"]+?)[";]?$/);
-    const fname = m ? m[1] : 'oci-panel-config.dat';
-    const a = document.createElement('a');
+    const fname = m ? m[1] : "oci-panel-config.dat";
+    const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = fname;
     a.click();
     URL.revokeObjectURL(a.href);
+    closeExportModal();
   } catch (e) {
-    alert('导出失败：' + e.message);
+    alert("导出失败：" + e.message);
   }
 }
 
-async function importConfig(ev) {
-  const file = ev.target.files && ev.target.files[0];
-  if (!file) return;
-  const pwd = document.getElementById('importPwd').value;
-  if (!pwd || pwd.length < 4) { alert('请输入至少 4 位的导入密码'); ev.target.value = ''; return; }
-  const el = document.getElementById('importResult');
-  el.style.color = '';
-  el.textContent = '导入中...';
+async function doImport() {
+  const file = document.getElementById("mImportFile").files[0];
+  const pwd = document.getElementById("mImportPwd").value;
+  const errEl = document.getElementById("importErr");
+  errEl.textContent = "";
+  if (!file) { errEl.textContent = "请选择配置文件"; return; }
+  if (!pwd) { errEl.textContent = "请输入密码"; return; }
   try {
     const fd = new FormData();
-    fd.append('file', file);
-    fd.append('password', pwd);
-    const r = await fetch('/settings/import', { method: 'POST', body: fd });
+    fd.append("file", file);
+    fd.append("password", pwd);
+    const r = await fetch("/settings/import", { method: "POST", body: fd });
     const j = await r.json();
     if (j.ok) {
-      el.textContent = '✓ ' + j.message + '，即将刷新页面...';
-      el.style.color = '#28a745';
-      setTimeout(() => location.reload(), 2000);
+      closeImportModal();
+      alert("✓ " + j.message);
+      setTimeout(() => location.reload(), 500);
     } else {
-      el.textContent = '✗ ' + j.error;
-      el.style.color = '#dc3545';
+      errEl.textContent = j.error || "导入失败";
     }
   } catch (e) {
-    el.textContent = '✗ 导入失败：' + e.message;
-    el.style.color = '#dc3545';
+    errEl.textContent = "导入失败：" + e.message;
   }
-  ev.target.value = '';
 }
 </script>
 

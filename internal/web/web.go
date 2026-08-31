@@ -1708,10 +1708,11 @@ func handleSettingsExport(w http.ResponseWriter, r *http.Request) {
 
 func handleSettingsImport(w http.ResponseWriter, r *http.Request) {
 	username := currentUsername(r)
-	f := form(r)
-	password := f["password"]
-	if len(password) < 4 {
-		errOut(w, "导入密码至少 4 位")
+	// 注意：前端用 FormData(multipart) 上传，必须用 FormValue 而不是 form()
+	// form() 内部的 ParseForm 不解析 multipart，会导致 password 永远为空
+	password := r.FormValue("password")
+	if password == "" {
+		errOut(w, "请输入密码")
 		return
 	}
 
@@ -1738,7 +1739,7 @@ func handleSettingsImport(w http.ResponseWriter, r *http.Request) {
 		errOut(w, "配置文件解析失败: "+err.Error())
 		return
 	}
-	if data.App != "oci-panel" || data.Tenants == nil {
+	if data.App != "oci-panel" {
 		errOut(w, "文件内容不正确（应为 OCI Panel 导出的加密配置）")
 		return
 	}
