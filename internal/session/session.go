@@ -66,7 +66,7 @@ func Login(w http.ResponseWriter, username string, userID int) {
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   os.Getenv("COOKIE_SECURE") != "false",
+		Secure:   os.Getenv("COOKIE_SECURE") == "true",
 		MaxAge:   int(maxAge.Seconds()),
 	})
 }
@@ -78,7 +78,7 @@ func Logout(w http.ResponseWriter) {
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   os.Getenv("COOKIE_SECURE") != "false",
+		Secure:   os.Getenv("COOKIE_SECURE") == "true",
 		MaxAge:   -1,
 	})
 }
@@ -91,3 +91,4 @@ func Current(r *http.Request) (username string, userID int, ok bool) {
 	}
 	return parseValue(c.Value)
 }
+
