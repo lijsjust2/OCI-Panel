@@ -1,0 +1,338 @@
+{{template "header" .}}
+
+<div class="page-head">
+  <h1>安全规则管理</h1>
+  <p class="muted">管理 Oracle Cloud Security List 的入站/出站规则（自动去重，整体提交）</p>
+</div>
+
+<section class="card">
+  <div class="filter-bar">
+    <label>租户
+      <select id="selTenant" onchange="onTenantChange()">
+        {{range .Tenants}}
+        <option value="{{.ID}}" {{if eq .ID $.SelectedTenantID}}selected{{end}}>{{.Name}}</option>
+        {{end}}
+      </select>
+    </label>
+    <label>区域
+      <select id="selRegion"></select>
+    </label>
+    <label>Security List
+      <select id="selSecurityList"></select>
+    </label>
+    <button class="btn sm primary" onclick="loadRules()">🔍 查询</button>
+    <button class="btn sm" onclick="openAddModal()">+ 添加规则</button>
+  </div>
+</section>
+
+<section class="card">
+  <!-- Tab 切换 -->
+  <div class="tabs" style="display:flex; border-bottom:2px solid #eee; margin-bottom:16px;">
+    <button class="tab-btn active" data-tab="ingress" onclick="switchTab('ingress')"
+            style="padding:10px 20px; border:none; background:none; cursor:pointer; font-weight:bold; border-bottom:2px solid currentColor; margin-bottom:-2px;">
+      入站规则
+    </button>
+    <button class="tab-btn" data-tab="egress" onclick="switchTab('egress')"
+            style="padding:10px 20px; border:none; background:none; cursor:pointer; color:#888;">
+      出站规则
+    </button>
+  </div>
+
+  <div id="tabContent">
+    <div class="table-wrap">
+<table class="table" id="rulesTable">
+      <thead>
+        <tr>
+          <th>id</th>
+          <th>规则类型</th>
+          <th>协议</th>
+          <th id="addrHeader">源地址</th>
+          <th>端口范围</th>
+          <th>Security List</th>
+          <th>描述</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody id="rulesTbody">
+        <tr><td colspan="8" class="muted center">请先选择租户和区域，点击「🔍 查询」加载规则</td></tr>
+      </tbody>
+    </table>
+</div>
+    <div id="emptyHint" class="muted center" style="display:none; padding:40px;">暂无规则</div>
+  </div>
+</section>
+
+<!-- 添加/编辑弹窗 -->
+<div id="ruleModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:100; align-items:center; justify-content:center;">
+  <div style="background:#fff; border-radius:8px; padding:24px; width:480px; max-width:calc(100vw - 24px); max-height:86vh; overflow-y:auto; box-shadow:0 8px 30px rgba(0,0,0,.15);">
+    <h3 id="modalTitle">添加规则</h3>
+    <div id="modalBody">
+      <label style="display:block; margin-bottom:12px;">
+        方向
+        <select id="f-direction" style="width:100%; padding:6px; margin-top:4px;" disabled>
+          <option value="ingress">入站 (Ingress)</option>
+          <option value="egress">出站 (Egress)</option>
+        </select>
+      </label>
+      <label style="display:block; margin-bottom:12px;">
+        协议
+        <select id="f-protocol" style="width:100%; padding:6px; margin-top:4px;" onchange="onProtocolChange()">
+          <option value="tcp">TCP</option>
+          <option value="udp">UDP</option>
+          <option value="icmp">ICMP</option>
+          <option value="all">所有协议 (ALL)</option>
+        </select>
+      </label>
+      <label style="display:block; margin-bottom:12px;" id="addrField">
+        <span id="addrLabel">源地址 (CIDR)</span>
+        <input id="f-source" style="width:100%; padding:6px; margin-top:4px;" placeholder="0.0.0.0/0" value="0.0.0.0/0">
+      </label>
+      <label style="display:block; margin-bottom:12px;" id="portField">
+        端口范围
+        <div style="display:flex; gap:8px;">
+          <input id="f-portMin" style="flex:1; padding:6px; margin-top:4px;" placeholder="起始端口 (如 22)">
+          <input id="f-portMax" style="flex:1; padding:6px; margin-top:4px;" placeholder="结束端口 (留空=单端口)">
+        </div>
+        <small class="muted" id="portHint"></small>
+      </label>
+      <label style="display:block; margin-bottom:12px; display:none;" id="icmpField">
+        ICMP 类型
+        <input id="f-icmpType" style="width:100%; padding:6px; margin-top:4px;" placeholder="0 (Echo Reply), 8 (Echo Request)" value="0">
+      </label>
+      <label style="display:block; margin-bottom:12px;">
+        描述 (可选)
+        <input id="f-description" style="width:100%; padding:6px; margin-top:4px;" placeholder="例如：SSH 入站">
+      </label>
+    </div>
+    <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
+      <button class="btn" onclick="closeModal()">取消</button>
+      <button class="btn primary" id="modalOk" onclick="submitModal()">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let state = {
+  currentTab: 'ingress',
+  rules: { ingress: [], egress: [] },
+  securityLists: [],
+  editing: null, // { localIndex, direction, securityListId, data }
+};
+
+function switchTab(tab) {
+  state.currentTab = tab;
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === tab);
+    b.style.color = b.dataset.tab === tab ? '' : '#888';
+  });
+  document.getElementById('addrHeader').textContent = tab === 'ingress' ? '源地址' : '目标地址';
+  renderRules();
+}
+
+async function onTenantChange() {
+  const tenantId = document.getElementById('selTenant').value;
+  const resp = await fetch(`/api/tenants/${tenantId}/regions`);
+  const data = await resp.json();
+  const sel = document.getElementById('selRegion');
+  sel.innerHTML = '';
+  (data.regions || []).forEach(r => {
+    const opt = document.createElement('option');
+    opt.value = r; opt.textContent = r;
+    sel.appendChild(opt);
+  });
+  // 切换租户后清空之前的查询结果
+  state.rules = { ingress: [], egress: [] };
+  state.securityLists = [];
+  document.getElementById('selSecurityList').innerHTML = '';
+  document.getElementById('rulesTbody').innerHTML = '<tr><td colspan="8" class="muted center">请选择区域后点击「🔍 查询」</td></tr>';
+  document.getElementById('emptyHint').style.display = 'none';
+}
+
+async function loadRules() {
+  const tenantId = document.getElementById('selTenant').value;
+  const regionKey = document.getElementById('selRegion').value;
+  if (!regionKey) { alert('请先选择区域'); return; }
+
+  document.getElementById('rulesTbody').innerHTML = '<tr><td colspan="8" class="muted center">加载中...</td></tr>';
+  const resp = await fetch(`/api/security-rules?tenantId=${tenantId}&region=${encodeURIComponent(regionKey)}`);
+  const data = await resp.json();
+
+  if (!data.ok) {
+    document.getElementById('rulesTbody').innerHTML = `<tr><td colspan="8" class="center" style="color:#d33;">加载失败: ${data.error || ''}</td></tr>`;
+    return;
+  }
+
+  state.rules = { ingress: data.ingress || [], egress: data.egress || [] };
+  state.securityLists = data.securityLists || [];
+
+  // 填充 Security List 下拉
+  const slSel = document.getElementById('selSecurityList');
+  slSel.innerHTML = '';
+  state.securityLists.forEach(sl => {
+    const opt = document.createElement('option');
+    opt.value = sl.id;
+    opt.textContent = sl.displayName + ' (' + sl.id.slice(-12) + ')';
+    slSel.appendChild(opt);
+  });
+
+  renderRules();
+}
+
+function renderRules() {
+  const list = state.rules[state.currentTab];
+  const tbody = document.getElementById('rulesTbody');
+  const empty = document.getElementById('emptyHint');
+
+  if (!list || list.length === 0) {
+    tbody.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+
+  tbody.innerHTML = list.map((r, i) => {
+    const addr = state.currentTab === 'ingress' ? r.source : r.destination;
+    return `<tr data-slist="${r.securityListId}" data-idx="${r.localIndex}">
+      <td class="muted small">${i + 1}</td>
+      <td>${state.currentTab === 'ingress' ? '入站' : '出站'}</td>
+      <td><span class="tag">${r.protocolLabel}</span></td>
+      <td class="mono small">${addr || '-'}</td>
+      <td class="small">${r.port || '-'}</td>
+      <td class="muted small" title="${r.securityListId}">${r.securityListName}</td>
+      <td class="muted small">${r.description || '-'}</td>
+      <td>
+        <button class="btn sm" onclick='openEditModal(${JSON.stringify({ idx: r.localIndex, slistId: r.securityListId, data: r })})'>✎ 编辑</button>
+        <button class="btn sm danger" onclick='deleteRule("${r.securityListId}", "${state.currentTab}", ${r.localIndex})'>🗑</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// ============ 弹窗 ============
+function openAddModal() {
+  state.editing = null;
+  document.getElementById('modalTitle').textContent = '添加规则';
+  document.getElementById('f-direction').value = state.currentTab;
+  document.getElementById('f-direction').disabled = true;
+  document.getElementById('f-protocol').value = 'tcp';
+  document.getElementById('f-source').value = '0.0.0.0/0';
+  document.getElementById('f-portMin').value = '';
+  document.getElementById('f-portMax').value = '';
+  document.getElementById('f-icmpType').value = '0';
+  document.getElementById('f-description').value = '';
+  onProtocolChange();
+  document.getElementById('ruleModal').style.display = 'flex';
+}
+
+function openEditModal(ctx) {
+  state.editing = ctx;
+  const r = ctx.data;
+  const direction = state.currentTab;
+  document.getElementById('modalTitle').textContent = '编辑规则';
+  document.getElementById('f-direction').value = direction;
+  document.getElementById('f-direction').disabled = true;
+
+  // 协议反推
+  const proto = r.protocol;
+  const protoVal = { '1': 'icmp', '6': 'tcp', '17': 'udp' }[proto] || proto;
+  document.getElementById('f-protocol').value = protoVal;
+
+  const addr = direction === 'ingress' ? r.source : r.destination;
+  document.getElementById('f-source').value = addr || '';
+
+  if (protoVal === 'icmp') {
+    document.getElementById('f-icmpType').value = (r.icmpType != null ? r.icmpType : 0);
+  } else if (protoVal !== 'all') {
+    const opts = (r.raw && (r.raw.tcpOptions || r.raw.udpOptions));
+    if (opts && opts.destinationPortRange) {
+      document.getElementById('f-portMin').value = opts.destinationPortRange.min;
+      document.getElementById('f-portMax').value = opts.destinationPortRange.max !== opts.destinationPortRange.min ? opts.destinationPortRange.max : '';
+    }
+  }
+  document.getElementById('f-description').value = r.description || '';
+  onProtocolChange();
+  document.getElementById('ruleModal').style.display = 'flex';
+}
+
+function onProtocolChange() {
+  const p = document.getElementById('f-protocol').value;
+  const icmpField = document.getElementById('icmpField');
+  const portField = document.getElementById('portField');
+  const addrLabel = document.getElementById('addrLabel');
+
+  icmpField.style.display = p === 'icmp' ? 'block' : 'none';
+  portField.style.display = (p === 'tcp' || p === 'udp') ? 'block' : 'none';
+
+  const isIngress = document.getElementById('f-direction').value === 'ingress';
+  addrLabel.textContent = (isIngress ? '源地址' : '目标地址') + ' (CIDR)';
+
+  if (p === 'tcp') document.getElementById('portHint').textContent = '例如：22 或 80-443';
+  else if (p === 'udp') document.getElementById('portHint').textContent = '例如：53 或 161';
+  else document.getElementById('portHint').textContent = '';
+}
+
+function closeModal() {
+  document.getElementById('ruleModal').style.display = 'none';
+}
+
+async function submitModal() {
+  const tenantId = document.getElementById('selTenant').value;
+  const regionKey = document.getElementById('selRegion').value;
+  const securityListId = document.getElementById('selSecurityList').value;
+  const direction = document.getElementById('f-direction').value;
+  const protocol = document.getElementById('f-protocol').value;
+  const source = document.getElementById('f-source').value.trim();
+  const portMin = document.getElementById('f-portMin').value.trim();
+  const portMax = document.getElementById('f-portMax').value.trim();
+  const icmpType = document.getElementById('f-icmpType').value.trim();
+  const description = document.getElementById('f-description').value.trim();
+
+  if (!securityListId) { alert('请选择 Security List'); return; }
+  if (!source && protocol !== 'all') { alert('请填写地址 (CIDR)'); return; }
+
+  const body = new URLSearchParams({
+    tenantId, regionKey, securityListId, direction, protocol, source,
+    portMin, portMax, icmpType, description,
+  });
+
+  const okBtn = document.getElementById('modalOk');
+  okBtn.disabled = true; okBtn.textContent = '保存中...';
+
+  try {
+    let url;
+    if (state.editing) {
+      body.set('localIndex', state.editing.idx);
+      url = '/api/security-rules/update';
+    } else {
+      url = '/api/security-rules/add';
+    }
+    const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
+    const data = await resp.json();
+    if (!data.ok) { alert('操作失败: ' + data.error); return; }
+    closeModal();
+    await loadRules();
+  } finally {
+    okBtn.disabled = false; okBtn.textContent = '保存';
+  }
+}
+
+async function deleteRule(securityListId, direction, localIndex) {
+  if (!confirm('确定删除这条规则？')) return;
+  const tenantId = document.getElementById('selTenant').value;
+  const regionKey = document.getElementById('selRegion').value;
+
+  const body = new URLSearchParams({ tenantId, regionKey, securityListId, direction, localIndex });
+  const resp = await fetch('/api/security-rules/delete', {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body,
+  });
+  const data = await resp.json();
+  if (!data.ok) { alert('删除失败: ' + data.error); return; }
+  await loadRules();
+}
+
+// 初始化：只加载区域下拉，不自动查规则
+(async () => {
+  await onTenantChange();
+})();
+</script>
+{{template "footer" .}}

@@ -1,0 +1,25 @@
+{{template "header" .}}
+<div class="login-card-v2">
+  <div class="login-brand">ORACLE</div>
+  <h1>欢迎使用 OCI Panel</h1>
+  <p class="muted login-subtitle">首次使用，请设置管理员账号和密码</p>
+
+  {{if .Error}}<div class="alert error">{{.Error}}</div>{{end}}
+
+  <form method="post" action="/setup" class="login-form">
+    <div class="field">
+      <label for="username">用户名</label>
+      <input id="username" name="username" required minlength="2" maxlength="32" pattern="[\w.\-]+" autofocus autocomplete="username" placeholder="2~32 位，字母 / 数字 / . _ -">
+    </div>
+    <div class="field">
+      <label for="password">密码</label>
+      <input id="password" type="password" name="password" required minlength="6" autocomplete="new-password" placeholder="至少 6 位">
+    </div>
+    <div class="field">
+      <label for="confirm_password">确认密码</label>
+      <input id="confirm_password" type="password" name="confirm_password" required minlength="6" autocomplete="new-password" placeholder="再次输入">
+    </div>
+    <button type="submit" class="btn primary full">完成设置</button>
+  </form>
+</div>
+{{template "footer" .}}

@@ -1,0 +1,263 @@
+{{template "header" .}}
+
+<div class="page-head">
+  <h1>租户管理</h1>
+  <p class="muted">导入 API 后，点击「同步」从甲骨文拉取区域订阅和实例信息</p>
+  <a href="/import" class="btn sm primary" style="display:inline-block; margin-top:12px;">+ API 导入</a>
+</div>
+
+{{if .Error}}<div class="alert error">{{.Error}}</div>{{end}}
+{{if .Success}}<div class="alert success">{{.Success}}</div>{{end}}
+
+<section class="card">
+  <div class="table-wrap">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>租户名</th>
+        <th>自定义名称</th>
+        <th>账号成本</th>
+        <th>存活天数</th>
+        <th>主区域</th>
+        <th>是否多区</th>
+        <th>账号类型</th>
+        <th>实例数</th>
+        <th>流量预警</th>
+        <th>创建时间</th>
+        <th>账号状态</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{if not .Tenants}}
+      <tr><td colspan="12" class="muted center">暂无租户，请点击上方「+ API 导入」添加</td></tr>
+      {{end}}
+      {{range .Tenants}}
+      <tr id="tenant-{{.ID}}" data-id="{{.ID}}"
+          data-custom="{{.CustomName}}" data-cost="{{.Cost}}" data-type="{{.AccountType}}"
+          data-traffic-enabled="{{if .TrafficEnabled}}1{{else}}0{{end}}"
+          data-traffic-threshold="{{.TrafficThreshold}}"
+          data-traffic-autoshutdown="{{if .TrafficAutoshutdown}}1{{else}}0{{end}}">
+        <td title="{{.TenancyOcid}}">{{.Name}}</td>
+        <td class="custom-name" style="cursor:pointer; color:#1976d2;" title="点击编辑">✎ {{.DisplayName}}</td>
+        <td class="cost">{{if .Cost}}{{.Cost}}{{else}}0{{end}}</td>
+        <td class="muted" title="{{.AccountCreatedAt}}">{{.Days}}</td>
+        <td><span class="tag">{{.MainRegion}}</span></td>
+        <td>
+          {{if .MultiRegion}}<span class="status ok">多区({{.RegionCountStr}})</span>
+          {{else if eq .RegionCount 1}}<span class="muted small">单区</span>
+          {{else}}<span class="muted small">-</span>{{end}}
+        </td>
+        <td><span class="tag {{if ne .AccountType "FREE"}}warn{{end}}">{{.AccountType}}</span></td>
+        <td class="instance-count">{{.InstanceCount}}</td>
+        <td class="traffic-cell" style="cursor:pointer;" title="点击设置流量预警">
+          {{if .TrafficEnabled}}
+            <span style="color:{{.UsedColor}}; font-weight:600;">✎ {{.UsedStr}}</span>
+            <span class="muted small">/ {{.ThrStr}}</span>
+          {{else}}
+            <span class="muted">未设置</span>
+          {{end}}
+        </td>
+        <td class="muted small">{{.CreatedAt}}</td>
+        <td class="sync-cell">
+          {{if eq .SyncStatus "ok"}}
+            {{if and .AccountState (ne .AccountState "ACTIVE")}}
+              <span class="status err" title="根compartment状态: {{.AccountState}}">✗ {{.AccountState}}</span>
+            {{else}}
+              <span class="status ok">✓ 正常</span>
+            {{end}}
+          {{else if eq .SyncStatus "error"}}
+            <span class="status err" title="{{.SyncError}}">✗ 异常</span>
+          {{else}}
+            <span class="muted small">未同步</span>
+          {{end}}
+        </td>
+        <td class="actions">
+          <button class="btn sm primary sync-btn" data-id="{{.ID}}">同步</button>
+          <form method="post" action="/tenants/{{.ID}}/delete" class="inline"
+                onsubmit="return confirm('确定删除租户「{{.Name}}」？关联的实例数据也会清除')">
+            <button type="submit" class="btn sm danger">删除</button>
+          </form>
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<!-- 编辑自定义名称弹窗 -->
+<div id="editModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:100; align-items:center; justify-content:center;">
+  <div style="background:#fff; border-radius:8px; padding:24px; width:360px; max-width:calc(100vw - 24px); box-shadow:0 8px 30px rgba(0,0,0,.2);">
+    <h3 style="margin-top:0;">✎ 编辑自定义名称</h3>
+    <input type="hidden" id="editId">
+    <label style="display:block; margin-bottom:8px;">自定义名称</label>
+    <input type="text" id="editCustom" style="width:100%; padding:6px; margin-top:4px;" placeholder="可以为空，最多100个字符">
+    <p class="muted small" style="margin-top:4px;">留空将恢复为默认值 DEFAULT_主区域</p>
+    <div style="text-align:right; margin-top:16px;">
+      <button class="btn sm" onclick="closeEdit()">取消</button>
+      <button class="btn sm primary" id="editSave">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 流量预警弹窗 -->
+<div id="trafficModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:100; align-items:center; justify-content:center;">
+  <div style="background:#fff; border-radius:8px; padding:24px; width:560px; max-width:calc(100vw - 24px); max-height:86vh; overflow-y:auto; box-shadow:0 8px 30px rgba(0,0,0,.2);">
+    <h3 style="margin-top:0; margin-bottom:16px;">📊 流量预警设置</h3>
+    <input type="hidden" id="trfTenantId">
+    <div style="background:#f5f7fa; border-radius:6px; padding:14px; margin-bottom:16px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <span class="muted small">本月出站流量</span>
+        <button class="btn sm" onclick="queryTraffic()" id="trfQueryBtn">🔄 立即查询</button>
+      </div>
+      <div id="trfCurrent" style="font-size:22px; font-weight:600; line-height:1.3;">—</div>
+      <div class="muted small" id="trfDetail" style="margin-top:6px;"></div>
+    </div>
+    <div style="margin-bottom:12px;">
+      <label class="check-line"><input type="checkbox" id="trfEnabled">启用流量预警（每30分钟自动检查）</label>
+    </div>
+    <div style="margin-bottom:12px;">
+      <label for="trfThreshold" style="display:block; margin-bottom:4px;">预警阈值（GB）</label>
+      <input type="number" id="trfThreshold" min="1" max="102400" value="9000" style="width:100%; padding:6px 8px; box-sizing:border-box;">
+      <p class="muted small" style="margin:4px 0 0;">Oracle 每月免费出站额度 10T，默认 9000G（约 8.79T）留缓冲</p>
+    </div>
+    <div style="margin-bottom:16px;">
+      <label class="check-line"><input type="checkbox" id="trfAutoShutdown">达到阈值后自动关机所有实例（SOFTSTOP）</label>
+    </div>
+    <div style="text-align:right; border-top:1px solid #eee; padding-top:14px;">
+      <button class="btn sm" onclick="closeTraffic()">取消</button>
+      <button class="btn sm primary" onclick="saveTraffic()" style="margin-left:8px;">保存设置</button>
+    </div>
+  </div>
+</div>
+
+<script>
+document.querySelectorAll('.sync-btn').forEach((btn) => {
+  btn.addEventListener('click', async () => {
+    const id = btn.dataset.id;
+    btn.disabled = true;
+    btn.textContent = '同步中...';
+    try {
+      const r = await fetch('/tenants/' + id + '/sync', { method: 'POST' });
+      const data = await r.json();
+      if (data.ok) {
+        const row = document.getElementById('tenant-' + id);
+        row.querySelector('.sync-cell').innerHTML = '<span class="status ok">✓ 正常</span>';
+        row.querySelector('.instance-count').textContent = data.instanceCount;
+        let msg = '同步成功！实例数: ' + data.instanceCount;
+        if (data.errors && data.errors.length > 0) {
+          msg += '\n\n部分区域/Compartment 查询出错（不影响已获取的实例）：\n' + data.errors.slice(0, 5).join('\n');
+        }
+        alert(msg);
+      } else {
+        alert('同步失败: ' + data.error);
+      }
+    } catch (e) {
+      alert('请求异常: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '同步';
+    }
+  });
+});
+
+const modal = document.getElementById('editModal');
+document.querySelectorAll('.custom-name').forEach((cell) => {
+  cell.addEventListener('click', () => {
+    const row = cell.closest('tr');
+    document.getElementById('editId').value = row.dataset.id;
+    document.getElementById('editCustom').value = row.dataset.custom || '';
+    modal.style.display = 'flex';
+    setTimeout(() => document.getElementById('editCustom').focus(), 50);
+  });
+});
+function closeEdit() { modal.style.display = 'none'; }
+modal.addEventListener('click', (e) => { if (e.target === modal) closeEdit(); });
+
+document.getElementById('editSave').addEventListener('click', async () => {
+  const id = document.getElementById('editId').value;
+  const body = new URLSearchParams({
+    custom_name: document.getElementById('editCustom').value.trim(),
+  });
+  const r = await fetch('/tenants/' + id + '/edit', { method: 'POST', body });
+  const data = await r.json();
+  if (data.ok) {
+    const row = document.getElementById('tenant-' + id);
+    row.dataset.custom = data.tenant.custom_name || '';
+    closeEdit();
+    location.reload();
+  } else {
+    alert('保存失败: ' + data.error);
+  }
+});
+
+const trafficModal = document.getElementById('trafficModal');
+document.querySelectorAll('.traffic-cell').forEach((cell) => {
+  cell.addEventListener('click', () => {
+    const row = cell.closest('tr');
+    document.getElementById('trfTenantId').value = row.dataset.id;
+    document.getElementById('trfEnabled').checked = row.dataset.trafficEnabled === '1';
+    document.getElementById('trfThreshold').value = row.dataset.trafficThreshold || 9000;
+    document.getElementById('trfAutoShutdown').checked = row.dataset.trafficAutoshutdown === '1';
+    document.getElementById('trfCurrent').textContent = row.dataset.trafficEnabled === '1' ? '查询中...' : '—';
+    document.getElementById('trfDetail').textContent = '';
+    trafficModal.style.display = 'flex';
+    if (row.dataset.trafficEnabled === '1') queryTraffic();
+  });
+});
+function closeTraffic() { trafficModal.style.display = 'none'; }
+trafficModal.addEventListener('click', (e) => { if (e.target === trafficModal) closeTraffic(); });
+
+function fmtGB(gb) {
+  gb = Number(gb || 0);
+  return gb >= 1024 ? (gb / 1024).toFixed(2) + 'T' : gb.toFixed(2) + 'G';
+}
+async function queryTraffic() {
+  const id = document.getElementById('trfTenantId').value;
+  const btn = document.getElementById('trfQueryBtn');
+  btn.disabled = true; btn.textContent = '查询中...';
+  document.getElementById('trfCurrent').textContent = '查询中...';
+  try {
+    const r = await fetch('/api/tenants/' + id + '/traffic');
+    const data = await r.json();
+    if (data.ok) {
+      const row = document.getElementById('tenant-' + id);
+      const thr = Number(row.dataset.trafficThreshold || 9000);
+      const gb = data.egressGB;
+      const color = gb > thr ? '#d32f2f' : gb > thr * 0.9 ? '#f57c00' : '#2e7d32';
+      document.getElementById('trfCurrent').innerHTML = '<span style="color:' + color + '">' + fmtGB(gb) + '</span>';
+      const parts = [];
+      if (data.monthStart) parts.push('本月起: ' + data.monthStart);
+      parts.push('入站: ' + fmtGB(data.ingressGB));
+      if (data.details && data.details.length > 0) parts.push('VNIC 数: ' + data.details.length);
+      document.getElementById('trfDetail').textContent = parts.join(' | ');
+    } else {
+      document.getElementById('trfCurrent').textContent = '查询失败';
+      document.getElementById('trfDetail').textContent = data.error || '';
+    }
+  } catch (e) {
+    document.getElementById('trfCurrent').textContent = '请求异常';
+  } finally {
+    btn.disabled = false; btn.textContent = '🔄 立即查询';
+  }
+}
+async function saveTraffic() {
+  const id = document.getElementById('trfTenantId').value;
+  const body = new URLSearchParams({
+    traffic_enabled: document.getElementById('trfEnabled').checked ? 'true' : 'false',
+    traffic_threshold: document.getElementById('trfThreshold').value,
+    traffic_autoshutdown: document.getElementById('trfAutoShutdown').checked ? 'true' : 'false',
+  });
+  const r = await fetch('/tenants/' + id + '/traffic-alert', { method: 'POST', body });
+  const data = await r.json();
+  if (data.ok) {
+    closeTraffic();
+    location.reload();
+  } else {
+    alert('保存失败: ' + data.error);
+  }
+}
+</script>
+
+{{template "footer" .}}

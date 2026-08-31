@@ -1,0 +1,76 @@
+{{template "header" .}}
+
+<div class="page-head">
+  <h1>API 导入</h1>
+  <p class="muted">粘贴 OCI config 文本或手动填写表单，将 API 配置保存到本地</p>
+</div>
+
+{{if .Error}}<div class="alert error">{{.Error}}</div>{{end}}
+{{if .Success}}<div class="alert success">{{.Success}}</div>{{end}}
+
+<section class="card">
+  <h2>导入 API 配置</h2>
+  <p class="muted small">
+    1. 粘贴 <code>~/.oci/config</code> 内容到下方文本框，<b>失焦自动填充</b>下方字段<br>
+    2. 在私钥区域粘贴 <code>~/.oci/oci_api_key.pem</code> 内容<br>
+    3. 确认无误后点击保存
+  </p>
+
+  <form method="post" action="/import" class="import-form">
+    <label>名称<input name="name" value="{{with .FormData}}{{.Name}}{{end}}" placeholder="如：我的甲骨文账号" required></label>
+
+    <div class="wide">
+      <label>OCI Config 内容（粘贴后失焦自动填充下方字段）</label>
+      <textarea id="ociConfigText" rows="6" placeholder="[DEFAULT]&#10;user=ocid1.user.oc1..&#10;fingerprint=aa:bb:cc:dd&#10;tenancy=ocid1.tenancy.oc1..&#10;region=us-ashburn-1"></textarea>
+    </div>
+
+    <label class="wide">Tenancy OCID<input name="tenancy_ocid" id="tenancy_ocid" value="{{with .FormData}}{{.TenancyOcid}}{{end}}" placeholder="ocid1.tenancy.oc1.." required></label>
+    <label class="wide">User OCID<input name="user_ocid" id="user_ocid" value="{{with .FormData}}{{.UserOcid}}{{end}}" placeholder="ocid1.user.oc1.." required></label>
+    <label class="wide">API 密钥指纹<input name="fingerprint" id="fingerprint" value="{{with .FormData}}{{.Fingerprint}}{{end}}" placeholder="aa:bb:cc:dd:..." required></label>
+    <label>区域
+      <select name="region" id="region" required>
+        {{range .Regions}}
+        <option value="{{.}}" {{if and $.FormData (eq $.FormData.Region .)}}selected{{end}}>{{.}}</option>
+        {{end}}
+      </select>
+    </label>
+    <label class="wide">私钥（PEM 格式）
+      <textarea name="private_key" rows="8" id="private_key" placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----" required>{{with .FormData}}{{.PrivateKey}}{{end}}</textarea>
+    </label>
+    <div class="wide">
+      <button type="submit" class="btn primary">保存</button>
+    </div>
+  </form>
+</section>
+
+<script>
+document.getElementById('ociConfigText').addEventListener('blur', parseConfig);
+
+function parseConfig() {
+  const text = document.getElementById('ociConfigText').value;
+  if (!text.trim()) return;
+  const lines = text.split(/\r?\n/);
+  const map = {};
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line || line.startsWith('[')) continue;
+    const eq = line.indexOf('=');
+    if (eq < 0) continue;
+    const k = line.slice(0, eq).trim().toLowerCase();
+    const v = line.slice(eq + 1).trim();
+    if (v.startsWith('#')) continue;
+    map[k] = v;
+  }
+  if (map.tenancy) document.getElementById('tenancy_ocid').value = map.tenancy;
+  if (map.user) document.getElementById('user_ocid').value = map.user;
+  if (map.fingerprint) document.getElementById('fingerprint').value = map.fingerprint;
+  if (map.region) {
+    const sel = document.getElementById('region');
+    for (const opt of sel.options) {
+      if (opt.value === map.region) { sel.value = map.region; break; }
+    }
+  }
+}
+</script>
+
+{{template "footer" .}}

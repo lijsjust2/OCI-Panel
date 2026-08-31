@@ -1,0 +1,7 @@
+# 运行数据（含私钥加密密钥与 session secret，严禁提交）
+data/
+
+# 编译产物
+oci-panel.exe
+oci-panel
+*.exe

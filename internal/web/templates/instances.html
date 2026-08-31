@@ -1,0 +1,381 @@
+{{template "header" .}}
+
+<div class="page-head">
+  <h1>实例列表</h1>
+  <p class="muted">所有租户已同步的 Oracle Cloud 实例。改配置（CPU/内存）前需先停止实例</p>
+</div>
+
+<section class="card">
+  <div class="filter-bar">
+    <label>租户
+      <select id="filterTenant" onchange="filterInstances()">
+        <option value="">全部</option>
+        {{range .Tenants}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+      </select>
+    </label>
+    <label>区域
+      <select id="filterRegion" onchange="filterInstances()">
+        <option value="">全部</option>
+        {{range .InstRegions}}<option value="{{.}}">{{.}}</option>{{end}}
+      </select>
+    </label>
+  </div>
+
+  <div class="table-wrap">
+<table class="table">
+    <thead>
+      <tr>
+        <th>租户名</th>
+        <th>所属区域</th>
+        <th>实例名称</th>
+        <th>CPU/MEM</th>
+        <th>架构</th>
+        <th>磁盘/VPU</th>
+        <th>主IPv4</th>
+        <th>IPv6</th>
+        <th>状态</th>
+        <th>开机天数</th>
+        <th>备注</th>
+        <th>创建时间</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody id="instanceTbody">
+      {{if not .Instances}}
+      <tr><td colspan="13" class="muted center">暂无实例，请先在「租户管理」同步数据</td></tr>
+      {{end}}
+      {{range .Instances}}
+      <tr data-tenant="{{.TenantID}}" data-region="{{.Region}}" id="row-{{.ID}}"
+          data-id="{{.ID}}" data-name="{{.DisplayName}}" data-note="{{.Note}}"
+          data-ocpu="{{.OcpuAttr}}" data-mem="{{.MemAttr}}"
+          data-vpu="{{.VpuAttr}}" data-state="{{.LifecycleState}}"
+          data-shape="{{.Shape}}">
+        <td title="{{.TenantCustomName}}">{{.TenantName}}</td>
+        <td><span class="tag">{{.Region}}</span></td>
+        <td>{{.DisplayName}}</td>
+        <td class="small">{{.CpuStr}} / {{.MemStr}}</td>
+        <td class="small">{{if .Arch}}{{.Arch}}{{else}}-{{end}}</td>
+        <td class="small disk-cell">{{.DiskStr}} / {{.VpuStr}}</td>
+        <td class="mono small ip-cell">{{if .PublicIP}}{{.PublicIP}}{{else}}-{{end}}</td>
+        <td class="mono small ipv6-cell" data-has-ipv6="{{if .IPv6}}1{{else}}0{{end}}">
+          {{if .IPv6}}
+            <a href="javascript:void(0)" class="ipv6-link" data-ipv6="{{.IPv6}}">{{.IPv6Short}}...详情</a>
+          {{else}}<span class="muted">否</span>{{end}}
+        </td>
+        <td class="state-cell">
+          {{if eq .LifecycleState "RUNNING"}}
+            <span class="status ok">● 运行</span>
+          {{else if eq .LifecycleState "STOPPING"}}
+            <span class="status warn">● 停止中</span>
+          {{else if eq .LifecycleState "STOPPED"}}
+            <span class="status warn">● 已停止</span>
+          {{else if eq .LifecycleState "STARTING"}}
+            <span class="status ok">● 启动中</span>
+          {{else if eq .LifecycleState "TERMINATED"}}
+            <span class="status err">● 已终止</span>
+          {{else}}
+            <span class="muted small">{{.LifecycleState}}</span>
+          {{end}}
+        </td>
+        <td class="small uptime-cell">{{.UptimeStr}}</td>
+        <td class="small note-cell wrap" title="{{.Note}}">{{if .Note}}{{.Note}}{{else}}-{{end}}</td>
+        <td class="muted small">{{.CreatedDateStr}}</td>
+        <td class="actions">
+          <button class="btn sm primary act-btn" data-act="menu" data-id="{{.ID}}">操作</button>
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+</section>
+
+<!-- 操作菜单 -->
+<div id="actMenu" style="display:none; position:fixed; z-index:200; background:#fff; border:1px solid #e3e8ee; border-radius:10px; box-shadow:0 8px 28px rgba(15,35,70,.16); min-width:232px; padding:6px 0;">
+  <div class="menu-label">电源</div>
+  <button class="menu-item" data-op="stop"><span class="mi-icon">⏻</span>停止实例（关机）</button>
+  <button class="menu-item" data-op="start"><span class="mi-icon">▶</span>启动实例</button>
+  <div class="menu-sep"></div>
+  <div class="menu-label">实例</div>
+  <button class="menu-item" data-op="note"><span class="mi-icon">📝</span>修改备注</button>
+  <button class="menu-item" data-op="rename"><span class="mi-icon">✏️</span>编辑名称（Oracle）</button>
+  <button class="menu-item" data-op="shape"><span class="mi-icon">🔧</span>修改配置（CPU/内存）</button>
+  <button class="menu-item" data-op="vpu"><span class="mi-icon">⚡</span>调整VPU（10-120）</button>
+  <div class="menu-sep"></div>
+  <div class="menu-label">网络</div>
+  <button class="menu-item" data-op="changeip"><span class="mi-icon">🔄</span>切换IPv4</button>
+  <button class="menu-item" data-op="enableip6"><span class="mi-icon">✅</span>启用IPv6</button>
+  <button class="menu-item" data-op="changeip6"><span class="mi-icon">🔄</span>切换IPv6</button>
+</div>
+
+<!-- 通用输入弹窗 -->
+<div id="inputModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:300; align-items:center; justify-content:center;">
+  <div style="background:#fff; border-radius:8px; padding:24px; width:380px; max-width:calc(100vw - 24px); box-shadow:0 8px 30px rgba(0,0,0,.2);">
+    <h3 id="modalTitle" style="margin-top:0;">操作</h3>
+    <p class="muted small" id="modalHint"></p>
+    <div id="modalFields"></div>
+    <div style="text-align:right; margin-top:16px;">
+      <button class="btn sm" onclick="closeModal()">取消</button>
+      <button class="btn sm primary" id="modalOk">确定</button>
+    </div>
+  </div>
+</div>
+
+<!-- IPv6 详情弹窗 -->
+<div id="ipv6Modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:300; align-items:center; justify-content:center;">
+  <div style="background:#fff; border-radius:8px; padding:24px; width:460px; max-width:calc(100vw - 24px); box-shadow:0 8px 30px rgba(0,0,0,.2);">
+    <h3 style="margin-top:0;">IPv6 地址详情</h3>
+    <p class="muted small" id="ipv6InstanceName"></p>
+    <p class="mono" id="ipv6FullAddr" style="word-break:break-all; background:#f5f7fa; padding:12px; border-radius:6px; font-size:14px;"></p>
+    <div style="text-align:right; margin-top:16px;">
+      <button class="btn sm" id="ipv6CopyBtn">复制</button>
+      <button class="btn sm primary" onclick="document.getElementById('ipv6Modal').style.display='none'">关闭</button>
+    </div>
+  </div>
+</div>
+
+<style>
+.menu-label { padding:7px 16px 3px; font-size:11px; color:#8a97a8; font-weight:600; letter-spacing:.5px; }
+.menu-sep { height:1px; background:#eef1f5; margin:5px 10px; }
+.menu-item { display:flex; align-items:center; gap:9px; width:calc(100% - 8px); margin:0 4px; text-align:left; padding:8px 12px; border:none; background:none; cursor:pointer; font-size:13px; color:#2c3e50; border-radius:6px; }
+.menu-item:hover { background:#eef4fb; }
+.menu-item.danger { color:#d33; }
+.mi-icon { width:18px; text-align:center; flex-shrink:0; }
+.ipv6-link { color:#2563eb; text-decoration:none; cursor:pointer; }
+.ipv6-link:hover { text-decoration:underline; }
+</style>
+
+<script>
+const menu = document.getElementById('actMenu');
+const inputModal = document.getElementById('inputModal');
+let currentRow = null;
+let currentOp = null;
+
+document.querySelectorAll('.act-btn').forEach((btn) => {
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    currentRow = document.getElementById('row-' + btn.dataset.id);
+    const hasIp6 = currentRow?.querySelector('.ipv6-cell')?.dataset.hasIpv6 === '1';
+    menu.querySelector('[data-op="enableip6"]').style.display = hasIp6 ? 'none' : '';
+    menu.querySelector('[data-op="changeip6"]').style.display = hasIp6 ? '' : 'none';
+    const rect = btn.getBoundingClientRect();
+    menu.style.display = 'block';
+    const mw = menu.offsetWidth;
+    const mh = menu.offsetHeight;
+    menu.style.left = Math.max(4, Math.min(rect.left, window.innerWidth - mw - 8)) + 'px';
+    let top = rect.bottom + 6;
+    if (top + mh > window.innerHeight - 8) {
+      top = Math.max(8, rect.top - mh - 6);
+      if (rect.top - mh - 6 < 8) top = 8;
+    }
+    menu.style.top = top + 'px';
+    menu.style.maxHeight = (window.innerHeight - 16) + 'px';
+    menu.style.overflowY = 'auto';
+  });
+});
+document.addEventListener('click', () => { menu.style.display = 'none'; });
+menu.addEventListener('click', (e) => e.stopPropagation());
+
+const OPS = {
+  stop:     { title: '停止实例', hint: '软关机（SOFTSTOP），系统会正常关机。确定继续？', fields: [], confirm: true },
+  start:    { title: '启动实例', hint: '启动实例。确定继续？', fields: [], confirm: true },
+  note:     { title: '修改备注', hint: '备注仅保存在本地面板', fields: [{ k: 'note', label: '备注', type: 'text' }] },
+  rename:   { title: '编辑名称', hint: '修改 Oracle 后台的实例名称（displayName）', fields: [{ k: 'display_name', label: '新名称', type: 'text' }] },
+  shape:    { title: '修改配置', hint: '仅 Flex 形状支持；实例必须处于已停止状态', fields: [
+    { k: 'ocpus', label: 'CPU (OCPU)', type: 'number', step: '0.1' },
+    { k: 'memory', label: '内存 (GB)', type: 'number', step: '1' } ] },
+  vpu:      { title: '调整 VPU', hint: '引导卷性能单位（每 GB 的 VPU），10 到 120 之间每 10 级一档', fields: [{ k: 'vpu', label: 'VPUs / GB', type: 'range', min: 0, max: 120, step: 10, enforce_min: 10 }] },
+  changeip: { title: '切换 IPv4', hint: '删除当前公网 IP 并分配新的随机 IP（约需 10 秒）', fields: [], confirm: true },
+  enableip6: { title: '启用 IPv6', hint: '为实例主网卡启用 IPv6（自动补齐 VCN/子网 IPv6 网段、网关和路由，约需 10-30 秒）。注意：系统内还需自行配置 IPv6 网络', fields: [], confirm: true },
+  changeip6: { title: '切换 IPv6', hint: '删除当前 IPv6 地址并分配新的（约需 10-30 秒）', fields: [], confirm: true },
+};
+
+menu.querySelectorAll('.menu-item').forEach((item) => {
+  item.addEventListener('click', () => {
+    menu.style.display = 'none';
+    const op = item.dataset.op;
+    const def = OPS[op];
+    if (!def || !currentRow) return;
+    currentOp = op;
+    document.getElementById('modalTitle').textContent = def.title;
+    document.getElementById('modalHint').textContent = `${def.hint}（实例：${currentRow.dataset.name}）`;
+
+    const fieldsDiv = document.getElementById('modalFields');
+    fieldsDiv.innerHTML = '';
+    for (const f of def.fields) {
+      const dataKey = f.k === 'memory' ? 'mem' : (f.k === 'display_name' ? 'name' : f.k);
+      const raw = currentRow.dataset[dataKey];
+      let val = raw ?? '';
+      if (f.type === 'range') {
+        const rmin = Number(f.min), rmax = Number(f.max), step = Number(f.step || 1);
+        const emin = f.enforce_min != null ? Number(f.enforce_min) : rmin;
+        let initVal = Number(val);
+        if (!isFinite(initVal) || initVal < emin) initVal = emin;
+        if (initVal > rmax) initVal = rmax;
+        initVal = Math.round(initVal / step) * step;
+        const ticks = [];
+        for (let v = rmin; v <= rmax; v += step) ticks.push(v);
+        const showEvery = Math.max(1, Math.ceil(ticks.length / 13));
+        fieldsDiv.innerHTML += `
+          <div style="margin-bottom:12px;">
+            <label style="display:block; margin-bottom:6px; font-size:13px;">${f.label}
+              <span class="muted small">（${rmin} ~ ${rmax}，step ${step}）</span>
+            </label>
+            <div style="display:flex; align-items:center; gap:14px;">
+              <input type="range" id="field-${f.k}" min="${rmin}" max="${rmax}" step="${step}" value="${initVal}"
+                     style="flex:1; accent-color:#2563eb; height:28px;">
+              <span id="field-${f.k}-val" class="mono" style="min-width:56px; text-align:center; background:#eef2ff; border:1px solid #c7d2fe; padding:6px 12px; border-radius:4px; font-weight:600; color:#1d4ed8; font-size:14px;">${initVal}</span>
+            </div>
+            <div class="muted" style="display:flex; justify-content:space-between; margin-top:2px; font-size:11px; padding:0 2px;">
+              ${ticks.map((v, i) => (i % showEvery === 0 ? `<span style="width:20px; text-align:center; color:#475569;">${v}</span>` : '<span style="width:20px;"></span>')).join('')}
+            </div>
+            <p class="muted small" id="field-${f.k}-warn" style="margin-top:4px; display:none; color:#d97706;">⚠ 最低为 ${emin}，会被自动修正</p>
+          </div>`;
+        setTimeout(() => {
+          const input = document.getElementById('field-' + f.k);
+          const disp = document.getElementById('field-' + f.k + '-val');
+          const warn = document.getElementById('field-' + f.k + '-warn');
+          const update = () => {
+            let v = Number(input.value);
+            v = Math.round(v / step) * step;
+            if (v < rmin) v = rmin;
+            if (v > rmax) v = rmax;
+            if (v !== 0 && v < emin) {
+              warn.style.display = 'block';
+            } else {
+              warn.style.display = 'none';
+            }
+            disp.textContent = v;
+          };
+          input.addEventListener('input', update);
+          input.addEventListener('change', () => {
+            let v = Number(input.value);
+            v = Math.round(v / step) * step;
+            if (v !== 0 && v < emin) v = emin;
+            if (v > rmax) v = rmax;
+            input.value = v;
+            update();
+          });
+        }, 0);
+      } else {
+        fieldsDiv.innerHTML += `
+          <label style="display:block; margin-bottom:12px;">${f.label}
+            <input type="${f.type}" step="${f.step || 1}" id="field-${f.k}" value="${val}"
+                   style="width:100%; margin-top:4px;">
+          </label>`;
+      }
+    }
+    document.getElementById('modalOk').textContent = def.confirm ? '确定执行' : '保存';
+    document.getElementById('modalOk').className = 'btn sm ' + (def.danger ? 'danger' : 'primary');
+    inputModal.style.display = 'flex';
+  });
+});
+
+function closeModal() { inputModal.style.display = 'none'; }
+inputModal.addEventListener('click', (e) => { if (e.target === inputModal) closeModal(); });
+
+document.getElementById('modalOk').addEventListener('click', async () => {
+  if (!currentOp || !currentRow) return;
+  const id = currentRow.dataset.id;
+  const def = OPS[currentOp];
+
+  const body = new URLSearchParams();
+  for (const f of def.fields) {
+    const raw = document.getElementById('field-' + f.k)?.value;
+    const v = (raw == null ? '' : String(raw)).trim();
+    if (!v) { alert(f.label + ' 不能为空'); return; }
+    if (f.type === 'range' || f.k === 'vpu') {
+      const n = Number(v);
+      const rmin = Number(f.min ?? 0), rmax = Number(f.max ?? 120);
+      const step = Number(f.step ?? 10);
+      const emin = f.enforce_min != null ? Number(f.enforce_min) : rmin;
+      if (!isFinite(n) || n < emin || n > rmax) { alert(`${f.label} 需在 ${emin} ~ ${rmax} 之间`); return; }
+      if (n % step !== 0) { alert(`${f.label} 必须是 ${step} 的倍数`); return; }
+    }
+    body.set(f.k, v);
+  }
+
+  const okBtn = document.getElementById('modalOk');
+  okBtn.disabled = true;
+  okBtn.textContent = '执行中...';
+  try {
+    const r = await fetch(`/instances/${id}/${currentOp}`, { method: 'POST', body });
+    const data = await r.json();
+    if (data.ok) {
+      closeModal();
+      if (currentOp === 'note') currentRow.querySelector('.note-cell').textContent = data.note || '-';
+      if (currentOp === 'rename') currentRow.dataset.name = body.get('display_name');
+      if (currentOp === 'changeip') currentRow.querySelector('.ip-cell').textContent = data.newIp;
+      if (currentOp === 'enableip6' || currentOp === 'changeip6') {
+        const cell = currentRow.querySelector('.ipv6-cell');
+        cell.dataset.hasIpv6 = '1';
+        cell.innerHTML = `<a href="javascript:void(0)" class="ipv6-link" data-ipv6="${data.ipv6}">${data.ipv6.slice(0, 14)}...详情</a>`;
+        bindIpv6Links(cell.querySelector('.ipv6-link'));
+      }
+      if (currentOp === 'vpu') {
+        const bootSize = (currentRow.dataset.vpu !== undefined && currentRow.querySelector('.disk-cell'))
+          ? currentRow.querySelector('.disk-cell').textContent.split(' / ')[0] : '-';
+        currentRow.dataset.vpu = body.get('vpu');
+        currentRow.querySelector('.disk-cell').textContent = `${bootSize} / ${body.get('vpu')}`;
+      }
+      if (currentOp === 'shape') {
+        currentRow.dataset.ocpu = body.get('ocpus');
+        currentRow.dataset.mem = body.get('memory');
+        const memCell = currentRow.children[3];
+        if (memCell) memCell.textContent = `${body.get('ocpus')}C / ${body.get('memory')}G`;
+      }
+      if (currentOp === 'stop') currentRow.querySelector('.state-cell').innerHTML = '<span class="status warn">● 停止中</span>';
+      if (currentOp === 'start') currentRow.querySelector('.state-cell').innerHTML = '<span class="muted small">STARTING</span>';
+      alert('操作成功！' + (data.newIp ? `\n新 IP: ${data.newIp}` : '') + (data.ipv6 ? `\nIPv6: ${data.ipv6}` : ''));
+    } else {
+      alert('操作失败: ' + data.error);
+    }
+  } catch (e) {
+    alert('请求异常: ' + e.message);
+  } finally {
+    okBtn.disabled = false;
+    okBtn.textContent = '确定';
+  }
+});
+
+const ipv6Modal = document.getElementById('ipv6Modal');
+function bindIpv6Links(root) {
+  (root || document).querySelectorAll?.('.ipv6-link:not([data-bound])').forEach((link) => {
+    link.dataset.bound = '1';
+    link.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const row = link.closest('tr');
+      document.getElementById('ipv6InstanceName').textContent = '实例：' + (row?.dataset.name || '');
+      document.getElementById('ipv6FullAddr').textContent = link.dataset.ipv6;
+      ipv6Modal.style.display = 'flex';
+    });
+  });
+}
+bindIpv6Links();
+ipv6Modal.addEventListener('click', (e) => { if (e.target === ipv6Modal) ipv6Modal.style.display = 'none'; });
+document.getElementById('ipv6CopyBtn').addEventListener('click', async () => {
+  const addr = document.getElementById('ipv6FullAddr').textContent;
+  try {
+    await navigator.clipboard.writeText(addr);
+    document.getElementById('ipv6CopyBtn').textContent = '已复制';
+    setTimeout(() => { document.getElementById('ipv6CopyBtn').textContent = '复制'; }, 1500);
+  } catch {
+    const range = document.createRange();
+    range.selectNodeContents(document.getElementById('ipv6FullAddr'));
+    const sel = window.getSelection();
+    sel.removeAllRanges(); sel.addRange(range);
+  }
+});
+
+function filterInstances() {
+  const t = document.getElementById('filterTenant').value;
+  const r = document.getElementById('filterRegion').value;
+  document.querySelectorAll('#instanceTbody tr[data-tenant]').forEach((tr) => {
+    const showTenant = !t || tr.dataset.tenant === t;
+    const showRegion = !r || tr.dataset.region === r;
+    tr.style.display = showTenant && showRegion ? '' : 'none';
+  });
+}
+</script>
+
+{{template "footer" .}}
