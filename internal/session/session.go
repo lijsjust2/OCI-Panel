@@ -1,10 +1,11 @@
-package session
+﻿package session
 
 import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -65,6 +66,7 @@ func Login(w http.ResponseWriter, username string, userID int) {
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
+		Secure:   os.Getenv("COOKIE_SECURE") != "false",
 		MaxAge:   int(maxAge.Seconds()),
 	})
 }
@@ -76,6 +78,7 @@ func Logout(w http.ResponseWriter) {
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
+		Secure:   os.Getenv("COOKIE_SECURE") != "false",
 		MaxAge:   -1,
 	})
 }

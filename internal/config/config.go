@@ -1,4 +1,4 @@
-package config
+﻿package config
 
 import (
 	"crypto/rand"
@@ -18,7 +18,7 @@ var (
 
 func init() {
 	DataDir = envOr("DATA_DIR", "./data")
-	if err := os.MkdirAll(DataDir, 0o755); err != nil {
+	if err := os.MkdirAll(DataDir, 0o700); err != nil {
 		panic(fmt.Errorf("创建数据目录失败: %w", err))
 	}
 	Port = envOr("PORT", "8800")

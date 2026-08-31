@@ -1,4 +1,4 @@
-// Package web 提供 HTTP 路由与页面渲染（逻辑对齐 Node 版 server.js + src/routes/*）
+﻿// Package web 提供 HTTP 路由与页面渲染（逻辑对齐 Node 版 server.js + src/routes/*）
 package web
 
 import (
@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -117,7 +118,7 @@ func New() http.Handler {
 	mux.HandleFunc("POST /settings/notify", handleSettingsNotify)
 	mux.HandleFunc("POST /settings/2fa", handleSettings2FA)
 	mux.HandleFunc("POST /settings/notify/test", handleSettingsNotifyTest)
-	mux.HandleFunc("GET /settings/export", handleSettingsExport)
+	mux.HandleFunc("POST /settings/export", handleSettingsExport)
 	mux.HandleFunc("POST /settings/import", handleSettingsImport)
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -284,11 +285,13 @@ func okOut(w http.ResponseWriter, extra map[string]any) {
 }
 
 func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return strings.TrimSpace(strings.Split(xff, ",")[0])
-	}
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return strings.TrimSpace(xri)
+	if os.Getenv("TRUST_PROXY") == "true" {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			return strings.TrimSpace(strings.Split(xff, ",")[0])
+		}
+		if xri := r.Header.Get("X-Real-IP"); xri != "" {
+			return strings.TrimSpace(xri)
+		}
 	}
 	host := r.RemoteAddr
 	if i := strings.LastIndex(host, ":"); i > 0 {
@@ -1622,11 +1625,19 @@ type exportConfig struct {
 	Settings map[string]any `json:"settings"`
 }
 
+
 func handleSettingsExport(w http.ResponseWriter, r *http.Request) {
 	username := currentUsername(r)
+	f := form(r)
+	password := f["password"]
+	if len(password) < 4 {
+		errOut(w, "导出密码至少 4 位")
+		return
+	}
+
 	var out exportConfig
 	out.App = "oci-panel"
-	out.Version = 1
+	out.Version = 2
 	out.ExportedAt = time.Now().UTC().Format(time.RFC3339)
 	for _, t := range store.ListTenants() {
 		full := store.GetTenant(t.ID)
@@ -1676,27 +1687,59 @@ func handleSettingsExport(w http.ResponseWriter, r *http.Request) {
 		"notify_account_health": s.NotifyAccountHealth, "notify_traffic_alert": s.NotifyTrafficAlert,
 		"two_fa_channel": twoFAChannel,
 	}
-	fname := fmt.Sprintf("oci-panel-config-%s.json", time.Now().UTC().Format("2006-01-02"))
+
+	jsonBytes, err := json.Marshal(out)
+	if err != nil {
+		errOut(w, "序列化失败: "+err.Error())
+		return
+	}
+	encrypted, err := cryptoutil.EncryptWithPassword(jsonBytes, password)
+	if err != nil {
+		errOut(w, "加密失败: "+err.Error())
+		return
+	}
+	fname := fmt.Sprintf("oci-panel-config-%s.dat", time.Now().UTC().Format("2006-01-02"))
 	w.Header().Set("Content-Disposition", `attachment; filename="`+fname+`"`)
-	jsonOut(w, out)
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Write(encrypted)
 }
 
 func handleSettingsImport(w http.ResponseWriter, r *http.Request) {
 	username := currentUsername(r)
-	var body struct {
-		Data *exportConfig `json:"data"`
+	f := form(r)
+	password := f["password"]
+	if len(password) < 4 {
+		errOut(w, "导入密码至少 4 位")
+		return
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&body); err != nil || body.Data == nil {
-		var direct exportConfig
-		if err2 := json.NewDecoder(strings.NewReader("")).Decode(&direct); err2 != nil {
-			errOut(w, "文件格式不正确（应为 OCI Panel 导出的配置文件）")
-			return
-		}
-		body.Data = &direct
+
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		errOut(w, "请选择配置文件")
+		return
 	}
-	data := body.Data
+	defer file.Close()
+	encData, err := io.ReadAll(io.LimitReader(file, 16<<20))
+	if err != nil {
+		errOut(w, "读取文件失败")
+		return
+	}
+
+	plain, err := cryptoutil.DecryptWithPassword(encData, password)
+	if err != nil {
+		errOut(w, err.Error())
+		return
+	}
+
+	var data exportConfig
+	if err := json.Unmarshal(plain, &data); err != nil {
+		errOut(w, "配置文件解析失败: "+err.Error())
+		return
+	}
 	if data.App != "oci-panel" || data.Tenants == nil {
-		errOut(w, "文件格式不正确（应为 OCI Panel 导出的配置文件）")
+		errOut(w, "文件内容不正确（应为 OCI Panel 导出的加密配置）")
 		return
 	}
 
@@ -1741,7 +1784,7 @@ func handleSettingsImport(w http.ResponseWriter, r *http.Request) {
 			updated++
 		} else {
 			if privateKeyEnc == nil {
-				skipped++ // 新租户缺少私钥无法添加
+				skipped++
 				continue
 			}
 			store.AddTenant(store.Tenant{
@@ -1753,7 +1796,6 @@ func handleSettingsImport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 推送渠道 + 通知任务（不自动开启 2FA）
 	if s := data.Settings; len(s) > 0 {
 		store.UpdateUserSettings(username, func(cfg *store.Settings) {
 			if v, ok := s["bark_url"].(string); ok {

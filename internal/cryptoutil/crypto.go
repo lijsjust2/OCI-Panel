@@ -1,4 +1,4 @@
-package cryptoutil
+﻿package cryptoutil
 
 import (
 	"crypto/aes"
@@ -159,4 +159,74 @@ func DecryptText(stored string) (string, error) {
 		return "", err
 	}
 	return string(plain), nil
+}
+
+// ---- 基于密码的加密/解密（用于配置导出/导入）----
+
+const (
+	encMagic = "OCIPANEL\x01" // 文件头标识 + 版本号
+	saltLen  = 32             // scrypt salt 长度
+	nonceLen = 12             // AES-GCM nonce 长度
+)
+
+// EncryptWithPassword 用密码加密任意数据，输出二进制格式（直接打开为乱码）
+func EncryptWithPassword(plaintext []byte, password string) ([]byte, error) {
+	salt := make([]byte, saltLen)
+	if _, err := rand.Read(salt); err != nil {
+		return nil, err
+	}
+	key, err := scrypt.Key([]byte(password), salt, 16384, 8, 1, 32)
+	if err != nil {
+		return nil, err
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	nonce := make([]byte, nonceLen)
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
+	}
+	enc := gcm.Seal(nil, nonce, plaintext, nil)
+	out := make([]byte, 0, len(encMagic)+saltLen+nonceLen+len(enc))
+	out = append(out, []byte(encMagic)...)
+	out = append(out, salt...)
+	out = append(out, nonce...)
+	out = append(out, enc...)
+	return out, nil
+}
+
+// DecryptWithPassword 用密码解密 EncryptWithPassword 产生的数据
+func DecryptWithPassword(data []byte, password string) ([]byte, error) {
+	headerLen := len(encMagic) + saltLen + nonceLen
+	if len(data) < headerLen {
+		return nil, fmt.Errorf("文件格式错误或已损坏")
+	}
+	if string(data[:len(encMagic)]) != encMagic {
+		return nil, fmt.Errorf("文件格式不正确（非 OCI Panel 加密配置）")
+	}
+	salt := data[len(encMagic) : len(encMagic)+saltLen]
+	nonce := data[len(encMagic)+saltLen : headerLen]
+	ciphertext := data[headerLen:]
+	key, err := scrypt.Key([]byte(password), salt, 16384, 8, 1, 32)
+	if err != nil {
+		return nil, err
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	plain, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return nil, fmt.Errorf("密码错误或文件已损坏")
+	}
+	return plain, nil
 }

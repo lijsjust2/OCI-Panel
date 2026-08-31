@@ -1,4 +1,4 @@
-{{template "header" .}}
+﻿{{template "header" .}}
 
 <div class="page-head">
   <h1>设置</h1>
@@ -154,14 +154,27 @@
 
 <!-- ============== 5. 配置备份（导出/导入） ============== -->
 <section class="card">
+<!-- ============== 5. 配置备份（加密导出/导入） ============== -->
+<section class="card">
   <h2 style="margin-top:0;">📦 配置备份</h2>
-  <p class="muted small">一键导出/导入全部配置：租户 API（含私钥、自定义名称）、推送渠道、通知任务。导出的文件包含敏感凭据，请妥善保管。</p>
+  <p class="muted small">导出时用密码加密全部配置（租户 API 含私钥、推送渠道、通知任务），生成 .dat 加密文件，直接打开为乱码。导入时需要相同的密码。</p>
 
-  <div class="test-row" style="flex-wrap:wrap;">
-    <a href="/settings/export" class="btn">⬇ 导出全部配置</a>
-    <input type="file" id="importFile" accept=".json,application/json" style="display:none;" onchange="importConfig(event)">
-    <button type="button" class="btn" onclick="document.getElementById('importFile').click()">⬆ 导入配置</button>
-    <span id="importResult" class="muted small"></span>
+  <div style="margin-bottom:16px;">
+    <label for="exportPwd" style="display:block; margin-bottom:6px;">导出密码（至少 4 位，用于加密配置文件）</label>
+    <div class="test-row" style="flex-wrap:wrap; gap:8px;">
+      <input type="password" id="exportPwd" minlength="4" placeholder="设置导出密码" style="width:200px;">
+      <button type="button" class="btn" onclick="exportConfig()">⬇ 导出加密配置</button>
+    </div>
+  </div>
+
+  <div>
+    <label for="importPwd" style="display:block; margin-bottom:6px;">导入密码（导出时设置的密码）</label>
+    <div class="test-row" style="flex-wrap:wrap; gap:8px;">
+      <input type="password" id="importPwd" minlength="4" placeholder="输入导入密码" style="width:200px;">
+      <input type="file" id="importFile" accept=".dat,.bin" style="display:none;" onchange="importConfig(event)">
+      <button type="button" class="btn" onclick="document.getElementById('importFile').click()">⬆ 选择文件并导入</button>
+      <span id="importResult" class="muted small"></span>
+    </div>
   </div>
   <p class="muted small" style="margin-top:8px;">导入按 Tenancy OCID 合并：已存在的租户会被更新，不会重复添加；实例与费用数据导入后通过「同步」自动重建；2FA 需手动重新开启。</p>
 </section>
@@ -221,19 +234,48 @@ async function testNotify(btn) {
   btn.disabled = false;
 }
 
+async function exportConfig() {
+  const pwd = document.getElementById('exportPwd').value;
+  if (!pwd || pwd.length < 4) { alert('请输入至少 4 位的导出密码'); return; }
+  try {
+    const r = await fetch('/settings/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ password: pwd }),
+    });
+    if (!r.ok) {
+      let msg = r.statusText;
+      try { const j = await r.json(); msg = j.error || msg; } catch (e) {}
+      alert('导出失败：' + msg);
+      return;
+    }
+    const blob = await r.blob();
+    const cd = r.headers.get('Content-Disposition') || '';
+    const m = cd.match(/filename="?([^"]+?)[";]?$/);
+    const fname = m ? m[1] : 'oci-panel-config.dat';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = fname;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } catch (e) {
+    alert('导出失败：' + e.message);
+  }
+}
+
 async function importConfig(ev) {
   const file = ev.target.files && ev.target.files[0];
   if (!file) return;
+  const pwd = document.getElementById('importPwd').value;
+  if (!pwd || pwd.length < 4) { alert('请输入至少 4 位的导入密码'); ev.target.value = ''; return; }
   const el = document.getElementById('importResult');
   el.style.color = '';
   el.textContent = '导入中...';
   try {
-    const text = await file.text();
-    const r = await fetch('/settings/import', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ data: JSON.parse(text) }),
-    });
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('password', pwd);
+    const r = await fetch('/settings/import', { method: 'POST', body: fd });
     const j = await r.json();
     if (j.ok) {
       el.textContent = '✓ ' + j.message + '，即将刷新页面...';
