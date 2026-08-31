@@ -5,3 +5,5 @@ data/
 oci-panel.exe
 oci-panel
 *.exe
+
+data-backup-*/
