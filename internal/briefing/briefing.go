@@ -80,7 +80,7 @@ func BuildBriefing() (title, content string) {
 		if region == "" {
 			region = "-"
 		}
-		cost := fmt.Sprintf("$%.4f", costByTenant[t.ID])
+		cost := fmt.Sprintf("$%.2f", costByTenant[t.ID])
 		egressStr := "-"
 		if e := monthEgressGB(&t); e != nil {
 			egressStr = fmtTraffic(*e)
@@ -132,7 +132,7 @@ func BuildBriefing() (title, content string) {
 	} else {
 		content = joinPara(blocks)
 	}
-	title = fmt.Sprintf("OCI简报：%s 累计花费$%.4f", healthText, totalCost)
+	title = fmt.Sprintf("OCI简报：%s 累计花费$%.2f", healthText, totalCost)
 	return title, content
 }
 

@@ -37,8 +37,9 @@
           data-custom="{{.CustomName}}" data-cost="{{.Cost}}" data-type="{{.AccountType}}"
           data-traffic-enabled="{{if .TrafficEnabled}}1{{else}}0{{end}}"
           data-traffic-threshold="{{.TrafficThreshold}}"
-          data-traffic-autoshutdown="{{if .TrafficAutoshutdown}}1{{else}}0{{end}}">
-        <td title="{{.TenancyOcid}}">{{.Name}}</td>
+          data-traffic-autoshutdown="{{if .TrafficAutoshutdown}}1{{else}}0{{end}}"
+          data-name="{{.Name}}">
+        <td class="tenant-name" style="cursor:pointer; color:#1976d2;" title="点击修改租户名">{{.Name}}</td>
         <td class="custom-name" style="cursor:pointer; color:#1976d2;" title="点击编辑">✎ {{.DisplayName}}</td>
         <td class="cost">{{if .Cost}}{{.Cost}}{{else}}0{{end}}</td>
         <td class="muted" title="{{.AccountCreatedAt}}">{{.Days}}</td>
@@ -89,9 +90,11 @@
 <!-- 编辑自定义名称弹窗 -->
 <div id="editModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:100; align-items:center; justify-content:center;">
   <div style="background:#fff; border-radius:8px; padding:24px; width:360px; max-width:calc(100vw - 24px); box-shadow:0 8px 30px rgba(0,0,0,.2);">
-    <h3 style="margin-top:0;">✎ 编辑自定义名称</h3>
+    <h3 style="margin-top:0;">✎ 编辑租户信息</h3>
     <input type="hidden" id="editId">
-    <label style="display:block; margin-bottom:8px;">自定义名称</label>
+    <label style="display:block; margin-bottom:8px;">租户名</label>
+    <input type="text" id="editName" style="width:100%; padding:6px; margin-top:4px;" placeholder="必填，例如 my-tenant-01">
+    <label style="display:block; margin-bottom:8px; margin-top:12px;">自定义名称</label>
     <input type="text" id="editCustom" style="width:100%; padding:6px; margin-top:4px;" placeholder="可以为空，最多100个字符">
     <p class="muted small" style="margin-top:4px;">留空将恢复为默认值 DEFAULT_主区域</p>
     <div style="text-align:right; margin-top:16px;">
@@ -163,21 +166,24 @@ document.querySelectorAll('.sync-btn').forEach((btn) => {
 });
 
 const modal = document.getElementById('editModal');
-document.querySelectorAll('.custom-name').forEach((cell) => {
-  cell.addEventListener('click', () => {
-    const row = cell.closest('tr');
-    document.getElementById('editId').value = row.dataset.id;
-    document.getElementById('editCustom').value = row.dataset.custom || '';
-    modal.style.display = 'flex';
-    setTimeout(() => document.getElementById('editCustom').focus(), 50);
-  });
+function openEdit(row) {
+  document.getElementById('editId').value = row.dataset.id;
+  document.getElementById('editName').value = row.dataset.name || '';
+  document.getElementById('editCustom').value = row.dataset.custom || '';
+  modal.style.display = 'flex';
+  setTimeout(() => document.getElementById('editName').focus(), 50);
+}
+document.querySelectorAll('.custom-name, .tenant-name').forEach((cell) => {
+  cell.addEventListener('click', () => openEdit(cell.closest('tr')));
 });
 function closeEdit() { modal.style.display = 'none'; }
-modal.addEventListener('click', (e) => { if (e.target === modal) closeEdit(); });
 
 document.getElementById('editSave').addEventListener('click', async () => {
   const id = document.getElementById('editId').value;
+  const name = document.getElementById('editName').value.trim();
+  if (!name) { alert('租户名不能为空'); return; }
   const body = new URLSearchParams({
+    name: name,
     custom_name: document.getElementById('editCustom').value.trim(),
   });
   const r = await fetch('/tenants/' + id + '/edit', { method: 'POST', body });
@@ -207,7 +213,6 @@ document.querySelectorAll('.traffic-cell').forEach((cell) => {
   });
 });
 function closeTraffic() { trafficModal.style.display = 'none'; }
-trafficModal.addEventListener('click', (e) => { if (e.target === trafficModal) closeTraffic(); });
 
 function fmtGB(gb) {
   gb = Number(gb || 0);

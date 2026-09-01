@@ -166,7 +166,7 @@ document.getElementById('startDate').value = daysAgoStr(29);
 document.getElementById('endDate').value = todayStr();
 
 function fmt(n, currency) {
-  const v = Number(n || 0).toFixed(4);
+  const v = Number(n || 0).toFixed(2);
   const c = currency || currentCurrency;
   const symbol = c === 'SGD' ? 'S$' : c === 'CNY' ? '¥' : '$';
   return `${symbol}${v}`;
@@ -281,9 +281,6 @@ function openDayTenants(day) {
 function closeDayTenants() {
   document.getElementById('dayTenantsModal').style.display = 'none';
 }
-document.getElementById('dayTenantsModal').addEventListener('click', (e) => {
-  if (e.target.id === 'dayTenantsModal') closeDayTenants();
-});
 
 // ============ 三级：单租户单天 SKU 明细（实时查 OCI） ============
 async function openDetail(tenantId, startDate, endDate) {
@@ -320,9 +317,6 @@ async function openDetail(tenantId, startDate, endDate) {
 function closeDetail() {
   document.getElementById('detailModal').style.display = 'none';
 }
-document.getElementById('detailModal').addEventListener('click', (e) => {
-  if (e.target.id === 'detailModal') closeDetail();
-});
 
 // 进页面自动查一次（读库，不发 OCI 请求）
 queryCosts();

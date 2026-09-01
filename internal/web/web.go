@@ -665,6 +665,11 @@ func handleTenantEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f := form(r)
+	name := strings.TrimSpace(f["name"])
+	if name == "" {
+		errOut(w, "租户名不能为空")
+		return
+	}
 	customName := strings.TrimSpace(f["custom_name"])
 	cost := strings.TrimSpace(f["cost"])
 	accountType := f["account_type"]
@@ -672,6 +677,7 @@ func handleTenantEdit(w http.ResponseWriter, r *http.Request) {
 		accountType = "FREE"
 	}
 	t := store.UpdateTenantFields(id, store.TenantFields{
+		Name:        &name,
 		CustomName:  &customName,
 		Cost:        &cost,
 		AccountType: &accountType,

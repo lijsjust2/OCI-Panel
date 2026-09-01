@@ -272,7 +272,6 @@ menu.querySelectorAll('.menu-item').forEach((item) => {
 });
 
 function closeModal() { inputModal.style.display = 'none'; }
-inputModal.addEventListener('click', (e) => { if (e.target === inputModal) closeModal(); });
 
 document.getElementById('modalOk').addEventListener('click', async () => {
   if (!currentOp || !currentRow) return;
@@ -352,7 +351,6 @@ function bindIpv6Links(root) {
   });
 }
 bindIpv6Links();
-ipv6Modal.addEventListener('click', (e) => { if (e.target === ipv6Modal) ipv6Modal.style.display = 'none'; });
 document.getElementById('ipv6CopyBtn').addEventListener('click', async () => {
   const addr = document.getElementById('ipv6FullAddr').textContent;
   try {
