@@ -112,6 +112,13 @@
 </div>
 
 <script>
+// HTML 转义，防止用户/OCI 数据注入
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 let state = {
   currentTab: 'ingress',
   rules: { ingress: [], egress: [] },
@@ -158,7 +165,7 @@ async function loadRules() {
   const data = await resp.json();
 
   if (!data.ok) {
-    document.getElementById('rulesTbody').innerHTML = `<tr><td colspan="8" class="center" style="color:#d33;">加载失败: ${data.error || ''}</td></tr>`;
+    document.getElementById('rulesTbody').innerHTML = `<tr><td colspan="8" class="center" style="color:#d33;">加载失败: ${esc(data.error || '')}</td></tr>`;
     return;
   }
 
@@ -192,17 +199,17 @@ function renderRules() {
 
   tbody.innerHTML = list.map((r, i) => {
     const addr = state.currentTab === 'ingress' ? r.source : r.destination;
-    return `<tr data-slist="${r.securityListId}" data-idx="${r.localIndex}">
+    return `<tr data-slist="${esc(r.securityListId)}" data-idx="${r.localIndex}">
       <td class="muted small">${i + 1}</td>
       <td>${state.currentTab === 'ingress' ? '入站' : '出站'}</td>
-      <td><span class="tag">${r.protocolLabel}</span></td>
-      <td class="mono small">${addr || '-'}</td>
-      <td class="small">${r.port || '-'}</td>
-      <td class="muted small" title="${r.securityListId}">${r.securityListName}</td>
-      <td class="muted small">${r.description || '-'}</td>
+      <td><span class="tag">${esc(r.protocolLabel)}</span></td>
+      <td class="mono small">${esc(addr || '-')}</td>
+      <td class="small">${esc(r.port || '-')}</td>
+      <td class="muted small" title="${esc(r.securityListId)}">${esc(r.securityListName)}</td>
+      <td class="muted small">${esc(r.description || '-')}</td>
       <td>
-        <button class="btn sm" onclick='openEditModal(${JSON.stringify({ idx: r.localIndex, slistId: r.securityListId, data: r })})'>✎ 编辑</button>
-        <button class="btn sm danger" onclick='deleteRule("${r.securityListId}", "${state.currentTab}", ${r.localIndex})'>🗑</button>
+        <button class="btn sm" onclick='openEditModal(${esc(JSON.stringify({ idx: r.localIndex, slistId: r.securityListId, data: r }))})'>✎ 编辑</button>
+        <button class="btn sm danger" onclick='deleteRule("${esc(r.securityListId)}", "${state.currentTab}", ${r.localIndex})'>🗑</button>
       </td>
     </tr>`;
   }).join('');

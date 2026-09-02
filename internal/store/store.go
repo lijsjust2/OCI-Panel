@@ -40,7 +40,9 @@ type User struct {
 	ID           int      `json:"id"`
 	Username     string   `json:"username"`
 	PasswordHash string   `json:"password_hash"`
-	Settings     Settings `json:"settings,omitempty"`
+	// PasswordEpoch 密码版本号：改密码时递增，用于使改密前的旧会话 Cookie 失效
+	PasswordEpoch int      `json:"password_epoch,omitempty"`
+	Settings      Settings `json:"settings,omitempty"`
 }
 
 type Tenant struct {
@@ -248,6 +250,7 @@ func UpdateUserPassword(username, newHash string) bool {
 	for i := range data.Users {
 		if data.Users[i].Username == username {
 			data.Users[i].PasswordHash = newHash
+			data.Users[i].PasswordEpoch++
 			save()
 			return true
 		}

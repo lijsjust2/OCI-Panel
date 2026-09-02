@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -54,9 +55,15 @@ func BuildProviderFromSettings(s store.Settings, forceChannel string) Provider {
 	return Provider{Provider: "bark", BarkURL: url, BarkKey: s.BarkKey}
 }
 
-// ---- HTTP 工具（15s 超时） ----
+// ---- HTTP 工具（15s 超时，禁止重定向） ----
 
-var httpClient = &http.Client{Timeout: 15 * time.Second}
+// 仅用于推送出口（pushplus 目标主机固定），禁止跟随重定向防止 SSRF 时被引导到内网
+var httpClient = &http.Client{
+	Timeout: 15 * time.Second,
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
 
 func httpGet(url string) (any, error) {
 	resp, err := httpClient.Get(url)
@@ -103,6 +110,39 @@ func clip(s string, n int) string {
 	return s
 }
 
+// ValidateBarkURL 校验 Bark 服务器地址：仅允许 https，且禁止指向
+// 环回/私网/链路本地地址（防止 SSRF 内网探测与 BarkKey 明文外带）。
+func ValidateBarkURL(raw string) error {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return fmt.Errorf("URL 格式错误")
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("Bark 服务器地址必须使用 https://")
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("缺少主机名")
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
+			return fmt.Errorf("不允许指向内网地址")
+		}
+		return nil
+	}
+	// 域名：解析后逐个 IP 检查
+	addrs, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("域名无法解析")
+	}
+	for _, ip := range addrs {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
+			return fmt.Errorf("不允许指向内网地址")
+		}
+	}
+	return nil
+}
+
 // barkPushUrl {server}/{deviceKey}/{content}?title=xxx
 func barkPushUrl(barkURL, barkKey, content, title string) string {
 	server := strings.TrimRight(strings.TrimSpace(barkURL), "/")
@@ -129,6 +169,9 @@ func pushOnce(p Provider, contentBark, contentHtml, title string) Result {
 	if p.Provider == "bark" {
 		if p.BarkURL == "" {
 			return Result{Error: "Bark 服务器地址未配置"}
+		}
+		if err := ValidateBarkURL(p.BarkURL); err != nil {
+			return Result{Error: "Bark 服务器地址无效：" + err.Error()}
 		}
 		if p.BarkKey == "" {
 			return Result{Error: "Bark 设备 Key 未配置（在 Bark App 内复制）"}

@@ -125,7 +125,20 @@ func New() http.Handler {
 		http.NotFound(w, r)
 	})
 
-	return authMiddleware(setupMiddleware(mux))
+	return securityHeaders(authMiddleware(setupMiddleware(mux)))
+}
+
+// securityHeaders 全局安全响应头：防点击劫持、MIME 嗅探、外站引用泄露
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "no-referrer")
+		// 内联脚本/样式较多，只做 frame-ancestors 防护，不用严格 CSP
+		h.Set("Content-Security-Policy", "frame-ancestors 'none'")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // ============================================================
@@ -155,8 +168,14 @@ func authMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		username, _, ok := session.Current(r)
+		username, _, epoch, ok := session.Current(r)
 		if !ok {
+			http.Redirect(w, r, "/login", http.StatusFound)
+			return
+		}
+		// 会话吊销：改密码后旧 Cookie 的 epoch 落后于当前值，强制下线
+		if u := store.FindUser(username); u == nil || u.PasswordEpoch != epoch {
+			session.Logout(w)
 			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}
@@ -286,10 +305,18 @@ func okOut(w http.ResponseWriter, extra map[string]any) {
 	jsonOut(w, m)
 }
 
+// clientIP 获取客户端真实 IP。
+// TRUST_PROXY=true 时使用 X-Forwarded-For 的最后一段（由最近的反向代理追加，
+// 客户端无法伪造该段），而不是首段（首段完全由客户端控制，可伪造绕过限流）。
 func clientIP(r *http.Request) string {
 	if os.Getenv("TRUST_PROXY") == "true" {
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			return strings.TrimSpace(strings.Split(xff, ",")[0])
+			parts := strings.Split(xff, ",")
+			// 取最后一段：这是直连反向代理的地址之前、由代理追加的真实客户端 IP
+			last := strings.TrimSpace(parts[len(parts)-1])
+			if last != "" {
+				return last
+			}
 		}
 		if xri := r.Header.Get("X-Real-IP"); xri != "" {
 			return strings.TrimSpace(xri)
@@ -378,7 +405,7 @@ func handleSetupSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := store.FindUser(username)
-	session.Login(w, username, u.ID)
+	session.Login(w, username, u.ID, u.PasswordEpoch)
 	http.Redirect(w, r, "/tenants", http.StatusFound)
 }
 
@@ -409,7 +436,7 @@ func anyUser2FA() bool {
 }
 
 func handleLoginPage(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := session.Current(r); ok {
+	if _, _, _, ok := session.Current(r); ok {
 		http.Redirect(w, r, "/tenants", http.StatusFound)
 		return
 	}
@@ -430,12 +457,19 @@ func handleSendCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ip := clientIP(r)
-	if push.RateLimited("sc:"+ip+"|"+username, 5, 10*time.Minute) {
+	// 双维度限流：IP+用户名 + 纯 IP 总量
+	if push.RateLimited("sc:"+ip+"|"+username, 5, 10*time.Minute) || push.RateLimited("scip:"+ip, 20, 10*time.Minute) {
 		errOut(w, "发送太频繁，请 10 分钟后再试")
 		return
 	}
 	user := store.FindUser(username)
-	if user == nil || !cryptoutil.VerifyPassword(password, user.PasswordHash) {
+	if user == nil {
+		// 哑哈希消除用户名枚举时序差
+		cryptoutil.VerifyPassword(password, cryptoutil.DummyHash)
+		errOut(w, "账号或密码错误")
+		return
+	}
+	if !cryptoutil.VerifyPassword(password, user.PasswordHash) {
 		errOut(w, "账号或密码错误")
 		return
 	}
@@ -459,8 +493,10 @@ func handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 	password := f["password"]
 	code := strings.TrimSpace(f["code"])
 	ip := clientIP(r)
+	// 双维度限流：IP+用户名（防单账号爆破）+ 纯 IP 总量（防轮换用户名稀释计数）
 	rlKey := "lg:" + ip + "|" + username
-	if push.RateLimited(rlKey, 10, 15*time.Minute) {
+	rlIPKey := "lgip:" + ip
+	if push.RateLimited(rlKey, 10, 15*time.Minute) || push.RateLimited(rlIPKey, 50, 15*time.Minute) {
 		p := loginView(true, "")
 		p.Error = "尝试次数过多，请 15 分钟后再试"
 		render(w, "login.html", p)
@@ -478,7 +514,13 @@ func handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user := store.FindUser(username)
-	if user == nil || !cryptoutil.VerifyPassword(password, user.PasswordHash) {
+	if user == nil {
+		// 哑哈希消除用户名枚举时序差
+		cryptoutil.VerifyPassword(password, cryptoutil.DummyHash)
+		failLogin("用户名或密码错误", "")
+		return
+	}
+	if !cryptoutil.VerifyPassword(password, user.PasswordHash) {
 		failLogin("用户名或密码错误", "")
 		return
 	}
@@ -494,7 +536,7 @@ func handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	session.Login(w, user.Username, user.ID)
+	session.Login(w, user.Username, user.ID, user.PasswordEpoch)
 	push.RateClear(rlKey)
 	http.Redirect(w, r, "/tenants", http.StatusFound)
 }
@@ -546,7 +588,7 @@ func handleImportSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	store.AddTenant(store.Tenant{
-		Name:          strings.TrimSpace(fd.Name),
+		Name:          sanitizeText(fd.Name),
 		TenancyOcid:   strings.TrimSpace(fd.TenancyOcid),
 		UserOcid:      strings.TrimSpace(fd.UserOcid),
 		Fingerprint:   strings.TrimSpace(fd.Fingerprint),
@@ -658,6 +700,24 @@ func handleTenantDelete(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/tenants", http.StatusFound)
 }
 
+// sanitizeText 清理用户输入的纯文本字段（租户名/备注等），
+// 防止通过租户名注入存储型 XSS。去除控制字符并限制长度。
+func sanitizeText(s string) string {
+	s = strings.TrimSpace(s)
+	var b strings.Builder
+	for _, r := range s {
+		if r < 0x20 && r != '\t' {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	out := b.String()
+	if len(out) > 200 {
+		out = out[:200]
+	}
+	return out
+}
+
 func handleTenantEdit(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r)
 	if err != nil {
@@ -665,12 +725,12 @@ func handleTenantEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f := form(r)
-	name := strings.TrimSpace(f["name"])
+	name := sanitizeText(f["name"])
 	if name == "" {
 		errOut(w, "租户名不能为空")
 		return
 	}
-	customName := strings.TrimSpace(f["custom_name"])
+	customName := sanitizeText(f["custom_name"])
 	cost := strings.TrimSpace(f["cost"])
 	accountType := f["account_type"]
 	if accountType == "" {
@@ -1424,6 +1484,13 @@ func handleSettingsChannel(w http.ResponseWriter, r *http.Request) {
 	barkKey := strings.TrimSpace(f["bark_key"])
 	pushplusToken := strings.TrimSpace(f["pushplus_token"])
 
+	if barkURL != "" {
+		if err := push.ValidateBarkURL(barkURL); err != nil {
+			render(w, "settings.html", settingsPage(r, "Bark 服务器地址无效："+err.Error(), ""))
+			return
+		}
+	}
+
 	var errs []string
 	if barkKey != "" {
 		if res := push.TestPush(push.Provider{Provider: "bark", BarkURL: barkURL, BarkKey: barkKey}); !res.Ok {
@@ -1454,6 +1521,10 @@ func handleSettingsChannelTest(w http.ResponseWriter, r *http.Request) {
 	barkURL := strings.TrimSpace(f["bark_url"])
 	if barkURL == "" {
 		barkURL = "https://api.day.app"
+	}
+	if err := push.ValidateBarkURL(barkURL); err != nil {
+		errOut(w, "Bark 服务器地址无效："+err.Error())
+		return
 	}
 	res := push.TestPush(push.Provider{
 		Provider: provider, BarkURL: barkURL,
@@ -1763,10 +1834,11 @@ func handleSettingsImport(w http.ResponseWriter, r *http.Request) {
 			skipped++
 			continue
 		}
-		name := strings.TrimSpace(t.Name)
+		name := sanitizeText(t.Name)
 		if name == "" {
 			name = "tenant"
 		}
+		customName := sanitizeText(t.CustomName)
 		accountType := strings.TrimSpace(t.AccountType)
 		if accountType == "" {
 			accountType = "FREE"
@@ -1788,7 +1860,7 @@ func handleSettingsImport(w http.ResponseWriter, r *http.Request) {
 			store.UpdateTenantFields(existingID, store.TenantFields{
 				Name: &name, UserOcid: &userOcid, Fingerprint: &fingerprint, Region: &region,
 				PrivateKeyEnc: privateKeyEnc,
-				CustomName:    &t.CustomName, Cost: &t.Cost, AccountType: &accountType,
+				CustomName:    &customName, Cost: &t.Cost, AccountType: &accountType,
 			})
 			updated++
 		} else {
@@ -1799,7 +1871,7 @@ func handleSettingsImport(w http.ResponseWriter, r *http.Request) {
 			store.AddTenant(store.Tenant{
 				Name: name, TenancyOcid: tenancyOcid, UserOcid: userOcid,
 				Fingerprint: fingerprint, Region: region, PrivateKeyEnc: *privateKeyEnc,
-				CustomName: t.CustomName, Cost: t.Cost, AccountType: accountType,
+				CustomName: customName, Cost: t.Cost, AccountType: accountType,
 			})
 			added++
 		}

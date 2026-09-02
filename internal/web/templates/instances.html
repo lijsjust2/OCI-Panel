@@ -146,6 +146,13 @@
 </style>
 
 <script>
+// HTML 转义，防止实例数据注入
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 const menu = document.getElementById('actMenu');
 const inputModal = document.getElementById('inputModal');
 let currentRow = null;
@@ -260,7 +267,7 @@ menu.querySelectorAll('.menu-item').forEach((item) => {
       } else {
         fieldsDiv.innerHTML += `
           <label style="display:block; margin-bottom:12px;">${f.label}
-            <input type="${f.type}" step="${f.step || 1}" id="field-${f.k}" value="${val}"
+            <input type="${f.type}" step="${f.step || 1}" id="field-${f.k}" value="${esc(val)}"
                    style="width:100%; margin-top:4px;">
           </label>`;
       }
@@ -308,7 +315,7 @@ document.getElementById('modalOk').addEventListener('click', async () => {
       if (currentOp === 'enableip6' || currentOp === 'changeip6') {
         const cell = currentRow.querySelector('.ipv6-cell');
         cell.dataset.hasIpv6 = '1';
-        cell.innerHTML = `<a href="javascript:void(0)" class="ipv6-link" data-ipv6="${data.ipv6}">${data.ipv6.slice(0, 14)}...详情</a>`;
+        cell.innerHTML = `<a href="javascript:void(0)" class="ipv6-link" data-ipv6="${esc(data.ipv6)}">${esc(data.ipv6.slice(0, 14))}...详情</a>`;
         bindIpv6Links(cell.querySelector('.ipv6-link'));
       }
       if (currentOp === 'vpu') {

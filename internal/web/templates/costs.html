@@ -130,6 +130,13 @@
 <script>
 let currentCurrency = 'USD';
 
+// HTML 转义，防止用户/OCI 数据注入
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 function todayStr() {
   const d = new Date();
   return d.toISOString().slice(0, 10);
@@ -195,7 +202,7 @@ async function queryCosts() {
       ? `共 ${data.days.length} 天（数据来自每日 8:00 定时同步）`
       : '该日期范围暂无数据，请点击「⟳ 立即同步」';
   } catch (e) {
-    document.getElementById('dailyTbody').innerHTML = `<tr><td colspan="7" class="muted center" style="color:#d32f2f;">查询失败: ${e.message}</td></tr>`;
+    document.getElementById('dailyTbody').innerHTML = `<tr><td colspan="7" class="muted center" style="color:#d32f2f;">查询失败: ${esc(e.message)}</td></tr>`;
     status.textContent = '';
   }
 }
@@ -218,13 +225,13 @@ function renderDaily(data) {
   }
   tbody.innerHTML = data.days.map((d) => `
     <tr>
-      <td>${d.date}</td>
+      <td>${esc(d.date)}</td>
       <td class="num small">${fmt(d.compute, d.currency)}</td>
       <td class="num small">${fmt(d.storage, d.currency)}</td>
       <td class="num small">${fmt(d.network, d.currency)}</td>
       <td class="num small">${fmt(d.other, d.currency)}</td>
       <td class="num" style="font-weight:600; color:${d.total > 0 ? '#d32f2f' : 'inherit'};">${fmt(d.total, d.currency)}</td>
-      <td><button class="btn sm" onclick='openDayTenants(${JSON.stringify(d).replace(/'/g, "&#39;")})'>📋 明细</button></td>
+      <td><button class="btn sm" onclick='openDayTenants(${esc(JSON.stringify(d))})'>📋 明细</button></td>
     </tr>
   `).join('');
 }
@@ -267,13 +274,13 @@ function openDayTenants(day) {
   const list = [...day.tenants].sort((a, b) => b.total - a.total);
   tbody.innerHTML = list.map((t) => `
     <tr>
-      <td>${t.name}</td>
+      <td>${esc(t.name)}</td>
       <td class="num small">${fmt(t.compute, t.currency)}</td>
       <td class="num small">${fmt(t.storage, t.currency)}</td>
       <td class="num small">${fmt(t.network, t.currency)}</td>
       <td class="num small">${fmt(t.other, t.currency)}</td>
       <td class="num" style="font-weight:600; color:${t.total > 0 ? '#d32f2f' : 'inherit'};">${fmt(t.total, t.currency)}</td>
-      <td><button class="btn sm" onclick="openDetail(${t.id}, '${day.date}', '${day.date}')">📋 明细</button></td>
+      <td><button class="btn sm" onclick="openDetail(${t.id}, '${esc(day.date)}', '${esc(day.date)}')">📋 明细</button></td>
     </tr>
   `).join('');
 }
@@ -300,17 +307,17 @@ async function openDetail(tenantId, startDate, endDate) {
     } else {
       tbody.innerHTML = data.items.map((i) => `
         <tr>
-          <td class="muted small">${i.date}</td>
-          <td><span class="tag">${i.category}</span></td>
-          <td class="small">${i.skuName}</td>
-          <td class="small">${i.resourceName}</td>
-          <td class="mono small" title="${i.resourceId}">${i.resourceId.slice(0, 24)}...</td>
+          <td class="muted small">${esc(i.date)}</td>
+          <td><span class="tag">${esc(i.category)}</span></td>
+          <td class="small">${esc(i.skuName)}</td>
+          <td class="small">${esc(i.resourceName)}</td>
+          <td class="mono small" title="${esc(i.resourceId)}">${esc(i.resourceId.slice(0, 24))}...</td>
           <td class="num" style="font-weight:600; color:${i.computedAmount > 0 ? '#d32f2f' : 'inherit'};">${fmt(i.computedAmount, i.currency)}</td>
         </tr>
       `).join('');
     }
   } catch (e) {
-    document.getElementById('detailTbody').innerHTML = `<tr><td colspan="6" class="muted center" style="color:#d32f2f;">加载失败: ${e.message}</td></tr>`;
+    document.getElementById('detailTbody').innerHTML = `<tr><td colspan="6" class="muted center" style="color:#d32f2f;">加载失败: ${esc(e.message)}</td></tr>`;
   }
 }
 

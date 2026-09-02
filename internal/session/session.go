@@ -1,4 +1,4 @@
-﻿package session
+package session
 
 import (
 	"crypto/hmac"
@@ -16,7 +16,8 @@ import (
 const cookieName = "ocipanel_session"
 const maxAge = 24 * time.Hour
 
-// 无状态签名 Cookie：payload = username|userId|expiryUnix，HMAC-SHA256 签名。
+// 无状态签名 Cookie：payload = username|userId|epoch|expiryUnix，HMAC-SHA256 签名。
+// epoch 为签发时的密码版本号（改密码后旧 Cookie 失效）。
 // 密钥持久化在 data/session.secret，重启后登录态不失效（对齐 Node 版 express-session 行为）。
 
 func sign(payload string) string {
@@ -25,44 +26,53 @@ func sign(payload string) string {
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
-func createValue(username string, userID int) string {
-	payload := username + "|" + strconv.Itoa(userID) + "|" + strconv.FormatInt(time.Now().Add(maxAge).Unix(), 10)
+func createValue(username string, userID, epoch int) string {
+	payload := username + "|" + strconv.Itoa(userID) + "|" + strconv.Itoa(epoch) + "|" + strconv.FormatInt(time.Now().Add(maxAge).Unix(), 10)
 	return base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + sign(payload)
 }
 
-func parseValue(v string) (username string, userID int, ok bool) {
+func parseValue(v string) (username string, userID, epoch int, ok bool) {
 	parts := strings.SplitN(v, ".", 2)
 	if len(parts) != 2 {
-		return "", 0, false
+		return "", 0, 0, false
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil {
-		return "", 0, false
+		return "", 0, 0, false
 	}
 	payload := string(raw)
 	if !hmac.Equal([]byte(sign(payload)), []byte(parts[1])) {
-		return "", 0, false
+		return "", 0, 0, false
 	}
 	fields := strings.Split(payload, "|")
-	if len(fields) != 3 {
-		return "", 0, false
+	if len(fields) != 4 {
+		// 兼容旧格式（无 epoch）：视为版本 0
+		if len(fields) == 3 {
+			fields = []string{fields[0], fields[1], "0", fields[2]}
+		} else {
+			return "", 0, 0, false
+		}
 	}
 	uid, err := strconv.Atoi(fields[1])
 	if err != nil {
-		return "", 0, false
+		return "", 0, 0, false
 	}
-	exp, err := strconv.ParseInt(fields[2], 10, 64)
+	ep, err := strconv.Atoi(fields[2])
+	if err != nil {
+		return "", 0, 0, false
+	}
+	exp, err := strconv.ParseInt(fields[3], 10, 64)
 	if err != nil || time.Now().Unix() > exp {
-		return "", 0, false
+		return "", 0, 0, false
 	}
-	return fields[0], uid, true
+	return fields[0], uid, ep, true
 }
 
 // Login 写入登录会话（重建：签发全新 Cookie，防会话固定攻击）
-func Login(w http.ResponseWriter, username string, userID int) {
+func Login(w http.ResponseWriter, username string, userID, epoch int) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     cookieName,
-		Value:    createValue(username, userID),
+		Value:    createValue(username, userID, epoch),
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
@@ -83,11 +93,11 @@ func Logout(w http.ResponseWriter) {
 	})
 }
 
-// Current 从请求解析当前登录用户
-func Current(r *http.Request) (username string, userID int, ok bool) {
+// Current 从请求解析当前登录用户（返回密码版本号 epoch，供与最新版本比对实现会话吊销）
+func Current(r *http.Request) (username string, userID, epoch int, ok bool) {
 	c, err := r.Cookie(cookieName)
 	if err != nil {
-		return "", 0, false
+		return "", 0, 0, false
 	}
 	return parseValue(c.Value)
 }

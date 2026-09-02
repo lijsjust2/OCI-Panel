@@ -1,4 +1,4 @@
-﻿package cryptoutil
+package cryptoutil
 
 import (
 	"crypto/aes"
@@ -91,11 +91,14 @@ func hexVal(c byte) int {
 func VerifyPassword(password, stored string) bool {
 	parts := strings.SplitN(stored, ":", 2)
 	if len(parts) != 2 {
+		// 格式无效时也执行一次 scrypt，消除响应时序差
+		_, _ = scrypt.Key([]byte(password), make([]byte, 16), 16384, 8, 1, 64)
 		return false
 	}
 	salt, err1 := fromHex(parts[0])
 	want, err2 := fromHex(parts[1])
 	if err1 != nil || err2 != nil {
+		_, _ = scrypt.Key([]byte(password), make([]byte, 16), 16384, 8, 1, 64)
 		return false
 	}
 	got, err := scrypt.Key([]byte(password), salt, 16384, 8, 1, 64)
@@ -104,6 +107,13 @@ func VerifyPassword(password, stored string) bool {
 	}
 	return subtle.ConstantTimeCompare(got, want) == 1
 }
+
+// DummyHash 启动时预计算的哑哈希：用户不存在时用它跑一次完整的
+// VerifyPassword，使响应时间与真实用户一致，防止时序枚举用户名。
+var DummyHash = func() string {
+	h, _ := HashPassword("dummy-password-for-timing")
+	return h
+}()
 
 // ---- API 私钥存储（AES-256-GCM，与 Node 版格式一致：base64(iv).base64(tag).base64(enc)） ----
 
