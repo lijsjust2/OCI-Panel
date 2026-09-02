@@ -285,17 +285,13 @@ func SendCode(p Provider, username, ip string) Result {
 	codeMu.Unlock()
 
 	location := lookupIpLocation(ip)
-	userPart := "正在执行登录操作"
-	if username != "" {
-		userPart = fmt.Sprintf("用户 <b>%s</b> 正在执行登录操作", username)
-	}
 	ipPart := ""
 	if location != "" {
 		ipPart = fmt.Sprintf("来自：【%s】", location)
 	}
-	title := "验证码" + code
-	contentBark := fmt.Sprintf("OCI Panel提醒你：\n%s\n%s\n验证码为：%s\n验证码有效期 5 分钟，请尽快认证", ipPart, userPart, code)
-	contentHtml := fmt.Sprintf("OCI Panel提醒你：<br>%s<br>%s<br>验证码为：<b>%s</b><br>验证码有效期 5 分钟，请尽快认证", ipPart, userPart, code)
+	title := "OCI-P验证码" + code
+	contentBark := fmt.Sprintf("OCI Panel提醒你：\n%s\n正在执行登录操作\n验证码为：%s\n验证码有效期 5 分钟，请尽快认证", ipPart, code)
+	contentHtml := fmt.Sprintf("OCI Panel提醒你：<br>%s<br>正在执行登录操作<br>验证码为：<b>%s</b><br>验证码有效期 5 分钟，请尽快认证", ipPart, code)
 
 	r := pushOnce(p, contentBark, contentHtml, title)
 	if r.Ok {
