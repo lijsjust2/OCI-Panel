@@ -56,8 +56,29 @@ func Categorize(service string) string {
 	return "其他"
 }
 
-// queryUsages 通用 Usage 查询（分页 + 重试 3 次）
+// usageChunkMaxDays OCI Usage API daily 粒度单次查询日期跨度上限 93 天，分段留余量
+const usageChunkMaxDays = 90
+
+// queryUsages 查询 Usage：跨度超过 93 天时自动分段查询再合并（否则 API 返回 400）
 func queryUsages(ctx context.Context, c Creds, startUtc, endUtc time.Time, granularity usageapi.RequestSummarizedUsagesDetailsGranularityEnum, groupBy []string) ([]usageapi.UsageSummary, error) {
+	var all []usageapi.UsageSummary
+	for cur := startUtc; cur.Before(endUtc); {
+		chunkEnd := cur.AddDate(0, 0, usageChunkMaxDays)
+		if chunkEnd.After(endUtc) {
+			chunkEnd = endUtc
+		}
+		items, err := queryUsagesChunk(ctx, c, cur, chunkEnd, granularity, groupBy)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, items...)
+		cur = chunkEnd
+	}
+	return all, nil
+}
+
+// queryUsagesChunk 单段查询（含分页 + 重试 3 次）
+func queryUsagesChunk(ctx context.Context, c Creds, startUtc, endUtc time.Time, granularity usageapi.RequestSummarizedUsagesDetailsGranularityEnum, groupBy []string) ([]usageapi.UsageSummary, error) {
 	cl, err := newUsageapiClient(c)
 	if err != nil {
 		return nil, err

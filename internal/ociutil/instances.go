@@ -163,8 +163,9 @@ func GetPrimaryVnic(c Creds, instanceId, compartmentId string) (*core.Vnic, erro
 	return pick(false), nil
 }
 
-// GetBootVolume 引导卷（磁盘大小 + VPU）
-func GetBootVolume(c Creds, instanceId, compartmentId string) (*core.BootVolume, error) {
+// GetBootVolume 引导卷（磁盘大小 + VPU）。
+// AvailabilityDomain 为 SDK 必填参数，缺失会导致请求构建失败。
+func GetBootVolume(c Creds, instanceId, compartmentId, availabilityDomain string) (*core.BootVolume, error) {
 	ctx := context.Background()
 	cmp, err := NewComputeClient(c)
 	if err != nil {
@@ -175,7 +176,9 @@ func GetBootVolume(c Creds, instanceId, compartmentId string) (*core.BootVolume,
 		return nil, err
 	}
 	resp, err := cmp.ListBootVolumeAttachments(ctx, core.ListBootVolumeAttachmentsRequest{
-		InstanceId: &instanceId, CompartmentId: &compartmentId,
+		InstanceId:          &instanceId,
+		CompartmentId:       &compartmentId,
+		AvailabilityDomain:  &availabilityDomain,
 	})
 	if err != nil {
 		return nil, err
@@ -241,7 +244,7 @@ func ListAllInstances(c Creds) (*SyncResult, error) {
 					vnic = v
 				}
 				var bv *core.BootVolume
-				if b, err := GetBootVolume(rc, str(inst.Id), compartment.ID); err == nil {
+				if b, err := GetBootVolume(rc, str(inst.Id), compartment.ID, str(inst.AvailabilityDomain)); err == nil {
 					bv = b
 				}
 				result.Raws = append(result.Raws, toRaw(regionId, inst, vnic, bv))
