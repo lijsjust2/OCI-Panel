@@ -35,15 +35,20 @@ var staticFS, _ = fs.Sub(files, "static")
 // REGIONS 导入页可选区域（对齐 Node 版 import.js）
 var REGIONS = []string{
 	"ap-seoul-1", "ap-chuncheon-1", "ap-tokyo-1", "ap-osaka-1",
-	"ap-singapore-1", "ap-mumbai-1", "ap-hyderabad-1", "ap-jakarta-1",
+	"ap-singapore-1", "ap-singapore-2", "ap-batam-1", "ap-kulai-2",
+	"ap-mumbai-1", "ap-hyderabad-1", "ap-jakarta-1",
 	"ap-melbourne-1", "ap-sydney-1",
-	"us-ashburn-1", "us-phoenix-1", "us-sanjose-1", "ca-toronto-1",
-	"sa-saopaulo-1", "sa-santiago-1", "sa-vinhedo-1", "mx-queretaro-1",
+	"us-ashburn-1", "us-phoenix-1", "us-sanjose-1", "us-chicago-1",
+	"ca-toronto-1", "ca-montreal-1",
+	"sa-saopaulo-1", "sa-santiago-1", "sa-vinhedo-1", "sa-valparaiso-1",
+	"sa-bogota-1", "mx-queretaro-1", "mx-monterrey-1",
 	"uk-london-1", "uk-cardiff-1",
 	"eu-frankfurt-1", "eu-amsterdam-1", "eu-marseille-1", "eu-milan-1",
-	"eu-zurich-1", "eu-madrid-1", "eu-stockholm-1",
-	"me-jeddah-1", "me-dubai-1", "il-jerusalem-1",
-	"af-johannesburg-1", "za-johannesburg-1",
+	"eu-zurich-1", "eu-madrid-1", "eu-madrid-3", "eu-stockholm-1",
+	"eu-paris-1", "eu-turin-1", "eu-jovanovac-1",
+	"me-jeddah-1", "me-dubai-1", "me-abudhabi-1", "me-riyadh-1",
+	"il-jerusalem-1",
+	"af-johannesburg-1", "af-casablanca-1", "za-johannesburg-1",
 }
 
 const codeHintText = "验证码将推送至已绑定设备，有效期 5 分钟。"
@@ -230,6 +235,9 @@ type TenantView struct {
 	ID                  int
 	Name                string
 	TenancyOcid         string
+	UserOcid            string
+	Fingerprint         string
+	Region              string
 	CustomName          string
 	DisplayName         string
 	Cost                string
@@ -582,6 +590,15 @@ func handleImportSubmit(w http.ResponseWriter, r *http.Request) {
 		fail("私钥格式错误（应为 PEM 格式，-----BEGIN PRIVATE KEY----- 开头）")
 		return
 	}
+	actualFp, err := ociutil.KeyFingerprint(fd.PrivateKey)
+	if err != nil {
+		fail("私钥校验失败: " + err.Error())
+		return
+	}
+	if !ociutil.FingerprintEquals(actualFp, fd.Fingerprint) {
+		fail("私钥与指纹不匹配：粘贴私钥的实际指纹为 " + actualFp + "，与填写的 " + strings.TrimSpace(fd.Fingerprint) + " 不一致，请确认私钥与该指纹是同一把密钥")
+		return
+	}
 	enc, err := cryptoutil.EncryptText(strings.TrimSpace(fd.PrivateKey))
 	if err != nil {
 		fail("私钥加密失败: " + err.Error())
@@ -609,6 +626,7 @@ func buildTenantViews() []TenantView {
 	for _, t := range tenants {
 		v := TenantView{
 			ID: t.ID, Name: t.Name, TenancyOcid: t.TenancyOcid,
+			UserOcid: t.UserOcid, Fingerprint: t.Fingerprint, Region: t.Region,
 			CustomName: t.CustomName, Cost: t.Cost,
 			AccountCreatedAt: t.AccountCreatedAt,
 			MultiRegion: t.MultiRegion, RegionCount: t.RegionCount,
@@ -688,10 +706,11 @@ func parseAnyTime(s string) (time.Time, error) {
 }
 
 func handleTenantsPage(w http.ResponseWriter, r *http.Request) {
-	render(w, "tenants.html", &page{
-		Title: "租户管理", Active: "tenants", Username: currentUsername(r),
-		Tenants: buildTenantViews(),
-	})
+    render(w, "tenants.html", &page{
+            Title: "租户管理", Active: "tenants", Username: currentUsername(r),
+            Tenants: buildTenantViews(),
+            Regions: REGIONS,
+    })
 }
 
 func handleTenantDelete(w http.ResponseWriter, r *http.Request) {
@@ -724,6 +743,10 @@ func handleTenantEdit(w http.ResponseWriter, r *http.Request) {
 		errOut(w, "租户 ID 无效")
 		return
 	}
+	if store.GetTenant(id) == nil {
+		errOut(w, "租户不存在")
+		return
+	}
 	f := form(r)
 	name := sanitizeText(f["name"])
 	if name == "" {
@@ -736,11 +759,55 @@ func handleTenantEdit(w http.ResponseWriter, r *http.Request) {
 	if accountType == "" {
 		accountType = "FREE"
 	}
+	tenancyOcid := strings.TrimSpace(f["tenancy_ocid"])
+	userOcid := strings.TrimSpace(f["user_ocid"])
+	fingerprint := strings.TrimSpace(f["fingerprint"])
+	region := strings.TrimSpace(f["region"])
+	if tenancyOcid == "" || userOcid == "" || fingerprint == "" || region == "" {
+		errOut(w, "Tenancy OCID、User OCID、指纹、区域均为必填")
+		return
+	}
+	if !strings.HasPrefix(tenancyOcid, "ocid1.tenancy.") {
+		errOut(w, "Tenancy OCID 格式错误（应以 ocid1.tenancy. 开头）")
+		return
+	}
+	if !strings.HasPrefix(userOcid, "ocid1.user.") {
+		errOut(w, "User OCID 格式错误（应以 ocid1.user. 开头）")
+		return
+	}
+	privateKey := strings.TrimSpace(f["private_key"])
+	var privateKeyEnc *string
+	if privateKey != "" {
+		if !strings.Contains(privateKey, "PRIVATE KEY") {
+			errOut(w, "私钥格式错误（应为 PEM 格式，-----BEGIN PRIVATE KEY----- 开头）")
+			return
+		}
+		actualFp, err := ociutil.KeyFingerprint(privateKey)
+		if err != nil {
+			errOut(w, "私钥校验失败: " + err.Error())
+			return
+		}
+		if !ociutil.FingerprintEquals(actualFp, fingerprint) {
+			errOut(w, "私钥与指纹不匹配：粘贴私钥的实际指纹为 " + actualFp + "，与填写的 " + fingerprint + " 不一致")
+			return
+		}
+		enc, err := cryptoutil.EncryptText(privateKey)
+		if err != nil {
+			errOut(w, "私钥加密失败: " + err.Error())
+			return
+		}
+		privateKeyEnc = &enc
+	}
 	t := store.UpdateTenantFields(id, store.TenantFields{
-		Name:        &name,
-		CustomName:  &customName,
-		Cost:        &cost,
-		AccountType: &accountType,
+		Name:          &name,
+		TenancyOcid:   &tenancyOcid,
+		UserOcid:      &userOcid,
+		Fingerprint:   &fingerprint,
+		Region:        &region,
+		PrivateKeyEnc: privateKeyEnc,
+		CustomName:    &customName,
+		Cost:          &cost,
+		AccountType:   &accountType,
 	})
 	if t == nil {
 		errOut(w, "租户不存在")

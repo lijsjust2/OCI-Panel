@@ -38,7 +38,9 @@
           data-traffic-enabled="{{if .TrafficEnabled}}1{{else}}0{{end}}"
           data-traffic-threshold="{{.TrafficThreshold}}"
           data-traffic-autoshutdown="{{if .TrafficAutoshutdown}}1{{else}}0{{end}}"
-          data-name="{{.Name}}">
+          data-name="{{.Name}}"
+          data-tenancy="{{.TenancyOcid}}" data-user="{{.UserOcid}}"
+          data-fp="{{.Fingerprint}}" data-region="{{.Region}}">
         <td class="tenant-name" style="cursor:pointer; color:#1976d2;" title="点击修改租户名">{{.Name}}</td>
         <td class="custom-name" style="cursor:pointer; color:#1976d2;" title="点击编辑">✎ {{.DisplayName}}</td>
         <td class="cost">{{if .Cost}}{{.Cost}}{{else}}0{{end}}</td>
@@ -74,6 +76,7 @@
           {{end}}
         </td>
         <td class="actions">
+          <button class="btn sm edit-btn" data-id="{{.ID}}">编辑</button>
           <button class="btn sm primary sync-btn" data-id="{{.ID}}">同步</button>
           <form method="post" action="/tenants/{{.ID}}/delete" class="inline"
                 onsubmit="return confirm('确定删除租户「{{.Name}}」？关联的实例数据也会清除')">
@@ -87,16 +90,53 @@
   </div>
 </section>
 
-<!-- 编辑自定义名称弹窗 -->
+<!-- 编辑租户弹窗 -->
 <div id="editModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:100; align-items:center; justify-content:center;">
-  <div style="background:#fff; border-radius:8px; padding:24px; width:360px; max-width:calc(100vw - 24px); box-shadow:0 8px 30px rgba(0,0,0,.2);">
-    <h3 style="margin-top:0;">✎ 编辑租户信息</h3>
+  <div style="background:#fff; border-radius:8px; padding:24px; width:560px; max-width:calc(100vw - 24px); max-height:88vh; overflow-y:auto; box-shadow:0 8px 30px rgba(0,0,0,.2);">
+    <h3 style="margin-top:0;">✎ 编辑租户</h3>
     <input type="hidden" id="editId">
-    <label style="display:block; margin-bottom:8px;">租户名</label>
-    <input type="text" id="editName" style="width:100%; padding:6px; margin-top:4px;" placeholder="必填，例如 my-tenant-01">
-    <label style="display:block; margin-bottom:8px; margin-top:12px;">自定义名称</label>
-    <input type="text" id="editCustom" style="width:100%; padding:6px; margin-top:4px;" placeholder="可以为空，最多100个字符">
-    <p class="muted small" style="margin-top:4px;">留空将恢复为默认值 DEFAULT_主区域</p>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:0 16px;">
+      <div>
+        <label style="display:block; margin-bottom:4px;">租户名</label>
+        <input type="text" id="editName" style="width:100%; padding:6px; box-sizing:border-box;" placeholder="必填">
+      </div>
+      <div>
+        <label style="display:block; margin-bottom:4px;">自定义名称</label>
+        <input type="text" id="editCustom" style="width:100%; padding:6px; box-sizing:border-box;" placeholder="可为空">
+      </div>
+      <div>
+        <label style="display:block; margin-bottom:4px; margin-top:12px;">账号成本</label>
+        <input type="text" id="editCost" style="width:100%; padding:6px; box-sizing:border-box;" placeholder="如 0 或 6.5">
+      </div>
+      <div>
+        <label style="display:block; margin-bottom:4px; margin-top:12px;">账号类型</label>
+        <select id="editType" style="width:100%; padding:6px; box-sizing:border-box;">
+          <option value="FREE">FREE（免费）</option>
+          <option value="PAYG">PAYG（按量付费）</option>
+        </select>
+      </div>
+    </div>
+    <p class="muted small" style="margin-top:4px;">自定义名称留空将恢复为默认值 DEFAULT_主区域</p>
+    <label style="display:block; margin-bottom:4px; margin-top:12px;">Tenancy OCID</label>
+    <input type="text" id="editTenancy" style="width:100%; padding:6px; box-sizing:border-box;" placeholder="ocid1.tenancy.oc1..">
+    <label style="display:block; margin-bottom:4px; margin-top:12px;">User OCID</label>
+    <input type="text" id="editUser" style="width:100%; padding:6px; box-sizing:border-box;" placeholder="ocid1.user.oc1..">
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:0 16px;">
+      <div>
+        <label style="display:block; margin-bottom:4px; margin-top:12px;">API 密钥指纹</label>
+        <input type="text" id="editFp" style="width:100%; padding:6px; box-sizing:border-box;" placeholder="aa:bb:cc:dd:...">
+      </div>
+      <div>
+        <label style="display:block; margin-bottom:4px; margin-top:12px;">区域</label>
+        <select id="editRegion" style="width:100%; padding:6px; box-sizing:border-box;">
+          {{range .Regions}}
+          <option value="{{.}}">{{.}}</option>
+          {{end}}
+        </select>
+      </div>
+    </div>
+    <label style="display:block; margin-bottom:4px; margin-top:12px;">私钥（PEM 格式）</label>
+    <textarea id="editKey" rows="4" style="width:100%; padding:6px; box-sizing:border-box; font-family:monospace; font-size:12px;" placeholder="留空则保持原私钥不变；更换时需粘贴完整 PEM 私钥，将自动校验与指纹是否匹配"></textarea>
     <div style="text-align:right; margin-top:16px;">
       <button class="btn sm" onclick="closeEdit()">取消</button>
       <button class="btn sm primary" id="editSave">保存</button>
@@ -166,15 +206,41 @@ document.querySelectorAll('.sync-btn').forEach((btn) => {
 });
 
 const modal = document.getElementById('editModal');
+function setRegionSelect(value) {
+  const sel = document.getElementById('editRegion');
+  let found = false;
+  for (const opt of sel.options) {
+    if (opt.value === value) { found = true; break; }
+  }
+  if (!found && value) {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = value + '（自动识别）';
+    sel.appendChild(opt);
+  }
+  sel.value = value;
+}
 function openEdit(row) {
   document.getElementById('editId').value = row.dataset.id;
   document.getElementById('editName').value = row.dataset.name || '';
   document.getElementById('editCustom').value = row.dataset.custom || '';
+  document.getElementById('editCost').value = row.dataset.cost || '';
+  const typeSel = document.getElementById('editType');
+  typeSel.value = row.dataset.type || 'FREE';
+  if (!typeSel.value) typeSel.value = 'FREE';
+  document.getElementById('editTenancy').value = row.dataset.tenancy || '';
+  document.getElementById('editUser').value = row.dataset.user || '';
+  document.getElementById('editFp').value = row.dataset.fp || '';
+  setRegionSelect(row.dataset.region || '');
+  document.getElementById('editKey').value = '';
   modal.style.display = 'flex';
   setTimeout(() => document.getElementById('editName').focus(), 50);
 }
 document.querySelectorAll('.custom-name, .tenant-name').forEach((cell) => {
   cell.addEventListener('click', () => openEdit(cell.closest('tr')));
+});
+document.querySelectorAll('.edit-btn').forEach((btn) => {
+  btn.addEventListener('click', () => openEdit(btn.closest('tr')));
 });
 function closeEdit() { modal.style.display = 'none'; }
 
@@ -182,15 +248,27 @@ document.getElementById('editSave').addEventListener('click', async () => {
   const id = document.getElementById('editId').value;
   const name = document.getElementById('editName').value.trim();
   if (!name) { alert('租户名不能为空'); return; }
+  const tenancy = document.getElementById('editTenancy').value.trim();
+  const user = document.getElementById('editUser').value.trim();
+  const fp = document.getElementById('editFp').value.trim();
+  const region = document.getElementById('editRegion').value;
+  if (!tenancy || !user || !fp || !region) { alert('Tenancy OCID、User OCID、指纹、区域均为必填'); return; }
+  const key = document.getElementById('editKey').value.trim();
+  if (key && !key.includes('PRIVATE KEY')) { alert('私钥格式错误（应为 PEM 格式）'); return; }
   const body = new URLSearchParams({
     name: name,
     custom_name: document.getElementById('editCustom').value.trim(),
+    cost: document.getElementById('editCost').value.trim(),
+    account_type: document.getElementById('editType').value,
+    tenancy_ocid: tenancy,
+    user_ocid: user,
+    fingerprint: fp,
+    region: region,
+    private_key: key,
   });
   const r = await fetch('/tenants/' + id + '/edit', { method: 'POST', body });
   const data = await r.json();
   if (data.ok) {
-    const row = document.getElementById('tenant-' + id);
-    row.dataset.custom = data.tenant.custom_name || '';
     closeEdit();
     location.reload();
   } else {

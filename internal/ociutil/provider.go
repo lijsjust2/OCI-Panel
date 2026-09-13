@@ -4,6 +4,9 @@ package ociutil
 
 import (
 	"context"
+	"crypto/md5"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"regexp"
 	"strings"
@@ -89,6 +92,50 @@ func makeProvider(c Creds) (common.ConfigurationProvider, error) {
 		region = "us-ashburn-1"
 	}
 	return common.NewRawConfigurationProvider(c.TenancyOcid, c.UserOcid, region, c.Fingerprint, key, passphrase), nil
+}
+
+// KeyFingerprint 计算私钥对应公钥的 MD5 指纹（与 OCI 控制台显示的 fingerprint 一致）
+func KeyFingerprint(keyPEM string) (string, error) {
+	block, _ := pem.Decode([]byte(NormalizePrivateKey(keyPEM)))
+	if block == nil {
+		return "", fmt.Errorf("PEM 解析失败，请确认粘贴了完整私钥")
+	}
+	var priv interface{}
+	var err error
+	switch block.Type {
+	case "RSA PRIVATE KEY":
+		priv, err = x509.ParsePKCS1PrivateKey(block.Bytes)
+	case "ENCRYPTED PRIVATE KEY":
+		return "", fmt.Errorf("私钥带有口令保护，请先去除口令再导入")
+	default:
+		priv, err = x509.ParsePKCS8PrivateKey(block.Bytes)
+	}
+	if err != nil {
+		return "", fmt.Errorf("私钥解析失败: %w", err)
+	}
+	holder, ok := priv.(interface{ Public() any })
+	if !ok {
+		return "", fmt.Errorf("无法从私钥提取公钥")
+	}
+	pubDER, err := x509.MarshalPKIXPublicKey(holder.Public())
+	if err != nil {
+		return "", fmt.Errorf("公钥提取失败: %w", err)
+	}
+	sum := md5.Sum(pubDER)
+	parts := make([]string, len(sum))
+	for i, b := range sum {
+		parts[i] = fmt.Sprintf("%02x", b)
+	}
+	return strings.Join(parts, ":"), nil
+}
+
+// FingerprintEquals 宽松比较两个指纹（忽略大小写与冒号）
+func FingerprintEquals(a, b string) bool {
+	norm := func(s string) string {
+		return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(s), ":", ""))
+	}
+	na, nb := norm(a), norm(b)
+	return na != "" && na == nb
 }
 
 // ---- 客户端构造 ----
@@ -183,7 +230,11 @@ func TestConnection(c Creds) (ok bool, message string) {
 	}
 	regions, err := idc.ListRegions(ctx)
 	if err != nil {
-		return false, "OCI API 返回: " + ErrInfo(err)
+		msg := "OCI API 返回: " + ErrInfo(err)
+		if StatusCode(err) == 401 {
+			msg += "\n常见原因：① 当前区域（" + c.Region + "）错误或租户未订阅该区域；② 指纹与私钥不匹配；③ API 密钥已被删除或重新生成"
+		}
+		return false, msg
 	}
 	// 对齐 Java 版 checkAccountStatus：认证 OK 后再验证 Compartments 访问
 	compartmentId := c.TenancyOcid

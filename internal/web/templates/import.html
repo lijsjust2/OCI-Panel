@@ -66,8 +66,16 @@ function parseConfig() {
   if (map.fingerprint) document.getElementById('fingerprint').value = map.fingerprint;
   if (map.region) {
     const sel = document.getElementById('region');
+    let found = false;
     for (const opt of sel.options) {
-      if (opt.value === map.region) { sel.value = map.region; break; }
+      if (opt.value === map.region) { sel.value = map.region; found = true; break; }
+    }
+    if (!found) {
+      const opt = document.createElement('option');
+      opt.value = map.region;
+      opt.textContent = map.region + '（自动识别）';
+      sel.appendChild(opt);
+      sel.value = map.region;
     }
   }
 }
